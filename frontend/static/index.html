@@ -338,8 +338,10 @@
               <label><span>max shift (cells)</span><input id="cra_max_shift" type="number" min="0" step="1" value="8" /></label>
               <button id="cra_apply" class="apply-btn cra-apply">recompute CRA</button>
             </div>
-            <div id="plot-cra-bars" class="plot plot-short"></div>
-            <div id="plot-cra-maps" class="plot"></div>
+            <div class="cra-section-label">MSE decomposition · % of forecast error explained by each piece</div>
+            <div id="plot-cra-bars" class="plot plot-cra-bars"></div>
+            <div class="cra-section-label cra-section-label-second">Rainfall accumulation maps · forecast (raw), shifted, vs observed — × marks the rainfall centroid; arrow is the corrective shift</div>
+            <div id="plot-cra-maps" class="plot plot-cra-maps"></div>
             <footer class="card-foot interp" id="cra-interp">
               CRA accumulates forecast rainfall over the lead window and
               compares against observed rainfall over the matching valid

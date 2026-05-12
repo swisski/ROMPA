@@ -1571,59 +1571,95 @@ function scalarFromCra(node) {
   return { value: null, lo: null, hi: null };
 }
 
+const CRA_SLICE_COLORS = {
+  displacement: "#6eb7ff",   // sky — placement error, fixable by shifting
+  volume:       "#f0b264",   // amber — bulk over/under-forecast
+  pattern:      "#b697e0",   // violet — structural / can't-fix-by-shift
+};
+
 function renderCraBars(results) {
   // results: [{ modelKey, modelLabel, color, out, error? }, ...]
   const div = $("plot-cra-bars");
   if (!div) return;
   const cells = [
-    { key: "displacement", color: "#4a90e2", label: "displacement" },
-    { key: "volume",       color: "#f0b264", label: "volume" },
-    { key: "pattern",      color: "#bd6dd6", label: "pattern" },
+    { key: "displacement", label: "displacement", color: CRA_SLICE_COLORS.displacement },
+    { key: "volume",       label: "volume",       color: CRA_SLICE_COLORS.volume },
+    { key: "pattern",      label: "pattern",      color: CRA_SLICE_COLORS.pattern },
   ];
-  // Filter to successful results. y-axis: one row per model, top-down.
   const ok = results.filter(r => r.out && !r.error);
   if (!ok.length) {
     Plotly.purge(div);
     div.innerHTML = `<div class="plot-error">CRA: no model returned a result</div>`;
     return;
   }
-  // Plotly stacks per (x,y) — to get one stacked bar per model we use
-  // each model as a y-category and stack the three slices along x.
-  const yCats = ok.map(r => r.modelLabel || r.modelKey);
+  // Per-slice numeric extraction (with multi-year median fallback).
+  const sliceValue = (row, key) => {
+    const pct = (row.out && row.out.pct) || {};
+    return scalarFromCra(pct[key]).value;
+  };
+
+  // y-categories: one row per model. Reverse so the *primary* (first
+  // active chip) sits at the top — matches the maps panel below.
+  const labels = ok.map(r => r.modelLabel || r.modelKey).reverse();
+  const orderedOk = ok.slice().reverse();
+
   const traces = cells.map(c => {
-    const xs = ok.map(r => {
-      const pct = (r.out && r.out.pct) || {};
-      const s = scalarFromCra(pct[c.key]);
-      return s.value == null ? 0 : s.value;
+    const xs = orderedOk.map(r => {
+      const v = sliceValue(r, c.key);
+      return v == null ? 0 : v;
     });
-    // Optional IQR text shown in hover when multi-year.
-    const hover = ok.map(r => {
+    const hover = orderedOk.map(r => {
       const pct = (r.out && r.out.pct) || {};
       const s = scalarFromCra(pct[c.key]);
-      const value = s.value == null ? null : s.value.toFixed(1);
+      const value = s.value == null ? "—" : s.value.toFixed(1);
       const ci = (s.lo != null && s.hi != null && s.lo !== s.hi)
         ? ` [${s.lo.toFixed(1)}–${s.hi.toFixed(1)}]` : "";
-      return `${c.label} ${value ?? "—"}%${ci}`;
+      return `${r.modelLabel || r.modelKey} · ${c.label} ${value}%${ci}`;
     });
+    const text = xs.map(v => v >= 5 ? `${v.toFixed(0)}%` : "");
     return {
       type: "bar",
       orientation: "h",
       x: xs,
-      y: yCats,
+      y: labels,
       name: c.label,
-      marker: { color: c.color },
+      marker: { color: c.color, line: { color: "rgba(0,0,0,0)", width: 0 } },
+      text,
+      textposition: "inside",
+      textfont: { color: "#0a131d", size: 11,
+                  family: "IBM Plex Mono, ui-monospace" },
+      insidetextanchor: "middle",
       hovertemplate: "%{customdata}<extra></extra>",
       customdata: hover,
     };
   });
-  const height = Math.max(140, 60 + 38 * ok.length);
+
+  // Height: comfortable per-model row plus title room.
+  const height = Math.max(200, 80 + 56 * ok.length);
   const layout = mergeLayout(PLOT_LAYOUT, {
     barmode: "stack",
-    xaxis: { range: [0, 100], title: "% of forecast MSE", ticksuffix: "%" },
-    yaxis: { tickfont: { size: 11 }, automargin: true },
-    margin: { l: 90, r: 20, t: 16, b: 38 },
+    barnorm: "",                       // already 0–100
+    bargap: 0.35,
+    xaxis: {
+      range: [0, 100], ticksuffix: "%",
+      title: "% of forecast MSE",
+      fixedrange: true,
+    },
+    yaxis: {
+      tickfont: { size: 12, family: "IBM Plex Sans, system-ui, sans-serif" },
+      automargin: true,
+      fixedrange: true,
+    },
+    margin: { l: 140, r: 28, t: 18, b: 44 },
     height,
-    legend: { orientation: "h", y: -0.18 },
+    legend: {
+      orientation: "h",
+      y: -0.32,
+      x: 0.5,
+      xanchor: "center",
+      bgcolor: "rgba(0,0,0,0)",
+      font: { size: 11 },
+    },
   });
   Plotly.react(div, traces, layout, PLOT_CONFIG);
   rememberPlot(div);
@@ -1638,61 +1674,172 @@ function renderCraMaps(out, modelLabel) {
     div.innerHTML = `<div class="plot-error">CRA: field payload missing</div>`;
     return;
   }
-  // Compute a shared color scale across the three panels.
+  // Shared color scale across the three panels (98th percentile across
+  // all three) so a single colorbar describes every map.
   const flat = [...f.obs.values, ...f.fcst.values, ...f.shifted.values].flat();
   const finite = flat.filter(v => Number.isFinite(v));
   const vmax = finite.length ? Math.max(1, percentile(finite, 0.98)) : 1;
 
-  const tag = modelLabel ? ` (${modelLabel})` : "";
+  // Per-panel headline numbers: MSE original vs MSE shifted, percent
+  // improvement from the corrective shift, and the decomposition.
+  const mse = out.mse || {};
+  const pct = out.pct || {};
+  const mseTotal   = scalarFromCra(mse.total).value;
+  const mseShifted = scalarFromCra(mse.shifted).value;
+  const pctImprov = (mseTotal != null && mseShifted != null && mseTotal > 0)
+    ? ((mseTotal - mseShifted) / mseTotal) * 100 : null;
+  const fmtMse = v => (v == null || !Number.isFinite(v)) ? "—" : v.toFixed(0);
+  const fmt1 = v => {
+    const s = scalarFromCra(v);
+    return s.value == null ? "—" : s.value.toFixed(1);
+  };
+
   const panels = [
-    { title: `Observed${tag}`,           data: f.obs,     xa: "x",  ya: "y"  },
-    { title: `Forecast raw${tag}`,       data: f.fcst,    xa: "x2", ya: "y2" },
-    { title: `Forecast shifted${tag}`,   data: f.shifted, xa: "x3", ya: "y3" },
+    {
+      key: "obs",  data: f.obs,  xa: "x",  ya: "y",
+      title: "Observed accumulation",
+      sub: out.display_country
+        ? `${out.display_country}-only · mm over lead window`
+        : "mm over lead window",
+    },
+    {
+      key: "fcst", data: f.fcst, xa: "x2", ya: "y2",
+      title: "Forecast accumulation",
+      sub: `MSE = ${fmtMse(mseTotal)}`,
+    },
+    {
+      key: "shifted", data: f.shifted, xa: "x3", ya: "y3",
+      title: "Shifted forecast",
+      sub: pctImprov == null
+        ? `MSE = ${fmtMse(mseShifted)}`
+        : `MSE = ${fmtMse(mseShifted)} · improved ${pctImprov.toFixed(0)}%`,
+    },
   ];
+
+  // Heatmap traces. ``connectgaps: false`` keeps NaN cells transparent
+  // (the demo's india-only render). ``zsmooth: false`` keeps cell edges
+  // crisp so the integer grid stays legible against the shift overlay.
   const traces = panels.map((p, idx) => ({
     type: "heatmap",
     z: p.data.values, x: p.data.lon, y: p.data.lat,
     colorscale: "YlGnBu", reversescale: false,
     zmin: 0, zmax: vmax,
+    connectgaps: false,
+    zsmooth: false,
     showscale: idx === panels.length - 1,
-    colorbar: idx === panels.length - 1 ? { title: "mm", thickness: 12, len: 0.9 } : undefined,
+    colorbar: idx === panels.length - 1
+      ? { title: "rainfall (mm)", thickness: 10, len: 0.78, x: 1.02,
+          tickfont: { size: 10 } }
+      : undefined,
     xaxis: p.xa, yaxis: p.ya,
     hovertemplate: `${p.title}<br>lat=%{y:.2f} lon=%{x:.2f}<br>%{z:.1f} mm<extra></extra>`,
   }));
+
+  // Shift overlay: a marker at the obs centroid on every panel, plus
+  // a marker at the forecast centroid (raw vs shifted) on the matching
+  // panels and an arrow showing the corrective shift on the
+  // forecast-raw panel. Centroids come from the backend; ``null`` if
+  // the field is all-masked.
+  const cent = out.centroids || {};
   const cs = out.corrective_shift || { dx: 0, dy: 0 };
-  const sx = scalarFromCra(cs.dx);
-  const sy = scalarFromCra(cs.dy);
-  const dxTxt = sx.value == null ? "—" : Math.round(sx.value);
-  const dyTxt = sy.value == null ? "—" : Math.round(sy.value);
+  const dxVal = scalarFromCra(cs.dx).value;
+  const dyVal = scalarFromCra(cs.dy).value;
+  const dxTxt = dxVal == null ? "—" : Math.round(dxVal);
+  const dyTxt = dyVal == null ? "—" : Math.round(dyVal);
+
+  // Centroid markers (obs on all three; fcst on raw panel; shifted on
+  // shifted panel) — make the *placement* of the rainfall mass visible.
+  const centroidTraces = [];
+  const addCentroid = (c, xa, ya, color, name) => {
+    if (!c || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) return;
+    centroidTraces.push({
+      type: "scatter", mode: "markers",
+      x: [c.lon], y: [c.lat],
+      xaxis: xa, yaxis: ya,
+      marker: {
+        color, size: 11, symbol: "x-thin", line: { color, width: 2.5 },
+      },
+      name, showlegend: false,
+      hovertemplate: `${name}<br>lat=%{y:.2f} lon=%{x:.2f}<extra></extra>`,
+    });
+  };
+  // Obs centroid in white on every panel, forecast in amber, shifted in sky.
+  ["x", "x2", "x3"].forEach((xa, i) =>
+    addCentroid(cent.obs, xa, ["y", "y2", "y3"][i], "#f7f3e3", "obs centroid"));
+  addCentroid(cent.fcst,    "x2", "y2", "#f0b264", "forecast centroid");
+  addCentroid(cent.shifted, "x3", "y3", "#6eb7ff", "shifted forecast centroid");
+
+  // Corrective-shift arrow on the forecast-raw panel: from fcst → obs.
+  const annotations = [];
+  if (cent.fcst && cent.obs && Number.isFinite(cent.fcst.lon)) {
+    annotations.push({
+      xref: "x2", yref: "y2",
+      ax: cent.fcst.lon, ay: cent.fcst.lat,
+      x:  cent.obs.lon,  y:  cent.obs.lat,
+      axref: "x2", ayref: "y2",
+      showarrow: true,
+      arrowhead: 3, arrowsize: 1.2, arrowwidth: 2,
+      arrowcolor: "#f0b264",
+    });
+  }
+
+  // Per-panel sub-headers ("MSE = ..." etc.) just above each map.
+  panels.forEach((p) => {
+    annotations.push({
+      text: `<b>${p.title}</b>`,
+      xref: `${p.xa} domain`, yref: `${p.ya} domain`,
+      x: 0.0, y: 1.08, xanchor: "left", yanchor: "bottom",
+      showarrow: false,
+      font: { size: 12, color: "#e4ddc9", family: "IBM Plex Sans, system-ui" },
+    });
+    annotations.push({
+      text: p.sub,
+      xref: `${p.xa} domain`, yref: `${p.ya} domain`,
+      x: 0.0, y: 1.02, xanchor: "left", yanchor: "bottom",
+      showarrow: false,
+      font: { size: 10, color: "#a8a291", family: "IBM Plex Mono, ui-monospace" },
+    });
+  });
+
+  // Bottom-edge caption: corrective shift in cells, decomposition triple.
   const shiftNote = (dxTxt === 0 && dyTxt === 0)
-    ? "best-fit shift: 0 cells"
-    : `best-fit shift: dx=${dxTxt}, dy=${dyTxt} cells (forecast moved to match obs)`;
-  const annotations = panels.map((p, idx) => ({
-    text: p.title,
-    xref: `${p.xa} domain`, yref: `${p.ya} domain`,
-    x: 0.02, y: 1.06, xanchor: "left", yanchor: "bottom",
-    showarrow: false, font: { size: 11, color: "#e4ddc9" },
-  }));
+    ? "best-fit corrective shift: 0 cells (forecast already aligned)"
+    : `best-fit corrective shift: ${Math.abs(dxTxt)} cell${Math.abs(dxTxt) === 1 ? "" : "s"} ${dxTxt > 0 ? "east" : "west"}, `
+      + `${Math.abs(dyTxt)} cell${Math.abs(dyTxt) === 1 ? "" : "s"} ${dyTxt > 0 ? "north" : "south"} `
+      + `(× to ×, arrow = corrective direction)`;
   annotations.push({
     text: shiftNote,
     xref: "paper", yref: "paper",
-    x: 0, y: -0.18, xanchor: "left",
-    showarrow: false, font: { size: 11, color: "#a8a291" },
+    x: 0.0, y: -0.13, xanchor: "left",
+    showarrow: false,
+    font: { size: 11, color: "#a8a291", family: "IBM Plex Mono, ui-monospace" },
   });
+  annotations.push({
+    text: `decomposition: <b>${fmt1(pct.displacement)}%</b> displacement · `
+        + `<b>${fmt1(pct.volume)}%</b> volume · `
+        + `<b>${fmt1(pct.pattern)}%</b> pattern`,
+    xref: "paper", yref: "paper",
+    x: 1.0, y: -0.13, xanchor: "right",
+    showarrow: false,
+    font: { size: 11, color: "#e4ddc9" },
+  });
+
   const layout = mergeLayout(PLOT_LAYOUT, {
     grid: { rows: 1, columns: 3, pattern: "independent" },
-    xaxis:  { title: "lon", domain: [0.00, 0.32] },
+    xaxis:  { title: "lon", domain: [0.00, 0.31], constrain: "domain" },
     yaxis:  { title: "lat", scaleanchor: "x" },
-    xaxis2: { title: "lon", domain: [0.34, 0.66] },
+    xaxis2: { title: "lon", domain: [0.34, 0.65], constrain: "domain" },
     yaxis2: { title: "",    matches: "y", showticklabels: false },
-    xaxis3: { title: "lon", domain: [0.68, 1.00] },
+    xaxis3: { title: "lon", domain: [0.68, 0.99], constrain: "domain" },
     yaxis3: { title: "",    matches: "y", showticklabels: false },
-    height: 360,
-    margin: { l: 50, r: 30, t: 36, b: 56 },
+    height: 420,
+    margin: { l: 56, r: 96, t: 56, b: 60 },
     annotations,
     showlegend: false,
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(8,14,22,0.92)",
   });
-  Plotly.react(div, traces, layout, PLOT_CONFIG);
+  Plotly.react(div, traces.concat(centroidTraces), layout, PLOT_CONFIG);
   rememberPlot(div);
 }
 

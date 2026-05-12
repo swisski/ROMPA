@@ -932,6 +932,19 @@ select {
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
 /* ----- CRA panel ------------------------------------------------------ */
+.cra-section-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--paper-faint);
+  padding: 6px 2px;
+  border-top: 1px solid var(--line-soft);
+  margin-top: 8px;
+}
+.cra-section-label-second { margin-top: 18px; }
+.plot-cra-bars { min-height: 240px; }
+.plot-cra-maps { min-height: 440px; }
 .cra-controls {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr)) auto;

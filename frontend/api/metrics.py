@@ -440,16 +440,44 @@ def _align_forecast_to_obs_grid(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcs
     return np.asarray(da.interp_like(target, method="nearest").values, dtype=float)
 
 
+def _country_display_mask(country: str | None, obs_lat: np.ndarray, obs_lon: np.ndarray):
+    """Boolean (lat, lon) mask of cells *inside* ``country``, or None.
+
+    Used by the CRA panel to blank cells outside the analysis region for
+    visualization (the decomposition itself runs against the full grid).
+    Errors fall back to ``None`` so a missing geopandas / regionmask
+    install doesn't break the endpoint."""
+    if not country:
+        return None
+    try:
+        from momp.utils.land_mask import country_mask
+        da = xr.DataArray(
+            np.zeros((obs_lat.size, obs_lon.size)),
+            dims=("lat", "lon"),
+            coords={"lat": obs_lat, "lon": obs_lon},
+        )
+        return np.asarray(country_mask(da, country).values, dtype=bool)
+    except Exception:
+        return None
+
+
 def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarray,
                 obs_vals: np.ndarray, obs_lat: np.ndarray, obs_lon: np.ndarray,
                 *, case: str, threshold: float, max_shift: int,
-                include_fields: bool = True) -> dict:
+                include_fields: bool = True,
+                display_country: str | None = "India") -> dict:
     """Run CRA decomposition and serialize the result.
 
     The forecast is regridded onto the obs grid first; both fields then
     enter ``cra_decomposition`` as same-shape numpy arrays. Field payloads
     (obs / fcst / shifted) are stride-downsampled before being returned so
     the response stays small for high-resolution grids.
+
+    ``display_country`` controls the country mask applied to the field
+    payloads only — cells outside the country are NaN'd so the frontend
+    heatmap shows the boundary cleanly. The CRA decomposition itself is
+    computed on the full grid (matching the demo's full-domain CRA
+    objective); set ``display_country=None`` to disable masking entirely.
     """
     from momp.metrics.cra import cra_decomposition
 
@@ -503,9 +531,46 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
         "max_shift": int(max_shift),
     }
     if include_fields:
+        display_mask = _country_display_mask(display_country, obs_lat, obs_lon)
+        if display_mask is not None:
+            obs_disp = np.where(display_mask, obs_2d, np.nan)
+            fcst_disp = np.where(display_mask, fcst_2d, np.nan)
+            shifted_disp = np.where(display_mask, shifted, np.nan)
+            payload["display_country"] = display_country
+        else:
+            obs_disp = obs_2d
+            fcst_disp = fcst_2d
+            shifted_disp = shifted
+            payload["display_country"] = None
         payload["fields"] = {
-            "obs": field_2d_payload(obs_2d, obs_lat, obs_lon),
-            "fcst": field_2d_payload(fcst_2d, obs_lat, obs_lon),
-            "shifted": field_2d_payload(shifted, obs_lat, obs_lon),
+            "obs": field_2d_payload(obs_disp, obs_lat, obs_lon),
+            "fcst": field_2d_payload(fcst_disp, obs_lat, obs_lon),
+            "shifted": field_2d_payload(shifted_disp, obs_lat, obs_lon),
+        }
+        # Forecast and shifted-forecast centroids — used by the frontend
+        # to draw a visible shift arrow between them.
+        payload["centroids"] = {
+            "fcst": _masked_centroid(fcst_disp, obs_lat, obs_lon),
+            "shifted": _masked_centroid(shifted_disp, obs_lat, obs_lon),
+            "obs": _masked_centroid(obs_disp, obs_lat, obs_lon),
         }
     return payload
+
+
+def _masked_centroid(arr: np.ndarray, lat: np.ndarray, lon: np.ndarray):
+    """Return ``{lat, lon}`` of the cell-weighted centroid of a 2-D field.
+
+    NaN cells and cells <= 0 are ignored. ``None`` if every contributing
+    cell is masked out — happens when the display country mask covers no
+    actual data (e.g. obs outside the model grid)."""
+    vals = np.asarray(arr, dtype=float)
+    finite = np.isfinite(vals) & (vals > 0)
+    if not finite.any():
+        return None
+    weights = np.where(finite, vals, 0.0)
+    total = weights.sum()
+    if total <= 0:
+        return None
+    lat_c = float((weights.sum(axis=1) * lat).sum() / total)
+    lon_c = float((weights.sum(axis=0) * lon).sum() / total)
+    return {"lat": lat_c, "lon": lon_c}
