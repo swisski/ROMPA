@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ROMP metrics API", version="0.4.1-cra-india-shift", lifespan=lifespan)
+app = FastAPI(title="ROMP metrics API", version="0.4.2-cra-objective", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],

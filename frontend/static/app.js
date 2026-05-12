@@ -1735,51 +1735,89 @@ function renderCraMaps(out, modelLabel) {
     hovertemplate: `${p.title}<br>lat=%{y:.2f} lon=%{x:.2f}<br>%{z:.1f} mm<extra></extra>`,
   }));
 
-  // Shift overlay: a marker at the obs centroid on every panel, plus
-  // a marker at the forecast centroid (raw vs shifted) on the matching
-  // panels and an arrow showing the corrective shift on the
-  // forecast-raw panel. Centroids come from the backend; ``null`` if
-  // the field is all-masked.
+  // Shift overlay. Centroids are rainfall-weighted (inside the country
+  // mask). The "actual movement" is fcst → shifted — i.e. fcst_centroid
+  // + (dy·dlat, dx·dlon). We draw an arrow on BOTH the forecast and
+  // shifted panels showing that movement, so the user sees where the
+  // mass came from and where it ended up.
   const cent = out.centroids || {};
   const cs = out.corrective_shift || { dx: 0, dy: 0 };
   const dxVal = scalarFromCra(cs.dx).value;
   const dyVal = scalarFromCra(cs.dy).value;
-  const dxTxt = dxVal == null ? "—" : Math.round(dxVal);
-  const dyTxt = dyVal == null ? "—" : Math.round(dyVal);
+  const dxCells = dxVal == null ? 0 : Math.round(dxVal);
+  const dyCells = dyVal == null ? 0 : Math.round(dyVal);
+  const spacing = out.grid_spacing || {};
+  const dlat = Number.isFinite(spacing.dlat) ? spacing.dlat : null;
+  const dlon = Number.isFinite(spacing.dlon) ? spacing.dlon : null;
 
-  // Centroid markers (obs on all three; fcst on raw panel; shifted on
-  // shifted panel) — make the *placement* of the rainfall mass visible.
+  // Centroid markers — solid filled circles + a white ring so they read
+  // against the heatmap. Two markers per relevant panel: obs (reference)
+  // in pale ink, and the forecast position (raw or shifted) in its own
+  // accent color.
   const centroidTraces = [];
-  const addCentroid = (c, xa, ya, color, name) => {
+  const addCentroid = (c, xa, ya, color, name, ring = "#f7f3e3") => {
     if (!c || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) return;
     centroidTraces.push({
       type: "scatter", mode: "markers",
       x: [c.lon], y: [c.lat],
       xaxis: xa, yaxis: ya,
       marker: {
-        color, size: 11, symbol: "x-thin", line: { color, width: 2.5 },
+        color, size: 14, symbol: "circle",
+        line: { color: ring, width: 2 },
       },
       name, showlegend: false,
       hovertemplate: `${name}<br>lat=%{y:.2f} lon=%{x:.2f}<extra></extra>`,
     });
   };
-  // Obs centroid in white on every panel, forecast in amber, shifted in sky.
-  ["x", "x2", "x3"].forEach((xa, i) =>
-    addCentroid(cent.obs, xa, ["y", "y2", "y3"][i], "#f7f3e3", "obs centroid"));
+  addCentroid(cent.obs,     "x",  "y",  "#f7f3e3", "obs centroid");
+  addCentroid(cent.obs,     "x2", "y2", "#f7f3e3", "obs centroid (reference)");
   addCentroid(cent.fcst,    "x2", "y2", "#f0b264", "forecast centroid");
+  addCentroid(cent.obs,     "x3", "y3", "#f7f3e3", "obs centroid (reference)");
   addCentroid(cent.shifted, "x3", "y3", "#6eb7ff", "shifted forecast centroid");
 
-  // Corrective-shift arrow on the forecast-raw panel: from fcst → obs.
+  // Arrow geometry: compute the shift endpoint from the fcst centroid +
+  // (dy*dlat, dx*dlon). Use the *full* (unmasked) centroids so the arrow
+  // origin reflects where the forecast actually is, not where the
+  // India-masked rainfall happens to fall.
   const annotations = [];
-  if (cent.fcst && cent.obs && Number.isFinite(cent.fcst.lon)) {
+  const fc = cent.fcst || cent.fcst_full;
+  if (fc && Number.isFinite(fc.lat) && dlat != null && dlon != null
+      && (dxCells !== 0 || dyCells !== 0)) {
+    const x_to = fc.lon + dxCells * dlon;
+    const y_to = fc.lat + dyCells * dlat;
+    // Draw on forecast-raw panel: arrow goes from fcst centroid toward
+    // where the shift will land. Bright amber so it stands out.
     annotations.push({
       xref: "x2", yref: "y2",
-      ax: cent.fcst.lon, ay: cent.fcst.lat,
-      x:  cent.obs.lon,  y:  cent.obs.lat,
+      ax: fc.lon, ay: fc.lat,
+      x:  x_to,   y:  y_to,
       axref: "x2", ayref: "y2",
       showarrow: true,
-      arrowhead: 3, arrowsize: 1.2, arrowwidth: 2,
+      arrowhead: 3, arrowsize: 1.6, arrowwidth: 3,
       arrowcolor: "#f0b264",
+      standoff: 8,
+    });
+    annotations.push({
+      text: `+${dxCells} <span style="font-size:9px">cells E/W</span>, ` +
+            `+${dyCells} <span style="font-size:9px">cells N/S</span>`,
+      xref: "x2", yref: "y2",
+      x: (fc.lon + x_to) / 2, y: (fc.lat + y_to) / 2,
+      xanchor: "left", yanchor: "bottom", xshift: 6,
+      showarrow: false,
+      font: { size: 10, color: "#f0b264", family: "IBM Plex Mono, ui-monospace" },
+      bgcolor: "rgba(8,14,22,0.85)", borderpad: 2,
+    });
+    // Mirror on shifted panel: dashed reverse arrow showing where the
+    // shifted forecast came from.
+    annotations.push({
+      xref: "x3", yref: "y3",
+      ax: fc.lon, ay: fc.lat,
+      x:  x_to,   y:  y_to,
+      axref: "x3", ayref: "y3",
+      showarrow: true,
+      arrowhead: 3, arrowsize: 1.2, arrowwidth: 2,
+      arrowcolor: "rgba(240, 178, 100, 0.55)",
+      standoff: 6,
     });
   }
 
@@ -1801,12 +1839,17 @@ function renderCraMaps(out, modelLabel) {
     });
   });
 
-  // Bottom-edge caption: corrective shift in cells, decomposition triple.
-  const shiftNote = (dxTxt === 0 && dyTxt === 0)
+  // Bottom-edge caption: corrective shift in cells and degrees.
+  const degTxt = (dlat != null && dlon != null && (dxCells !== 0 || dyCells !== 0))
+    ? ` (≈ ${Math.abs(dxCells * dlon).toFixed(1)}° ${dxCells > 0 ? "E" : dxCells < 0 ? "W" : ""}, `
+      + `${Math.abs(dyCells * dlat).toFixed(1)}° ${dyCells > 0 ? "N" : dyCells < 0 ? "S" : ""})`
+    : "";
+  const shiftNote = (dxCells === 0 && dyCells === 0)
     ? "best-fit corrective shift: 0 cells (forecast already aligned)"
-    : `best-fit corrective shift: ${Math.abs(dxTxt)} cell${Math.abs(dxTxt) === 1 ? "" : "s"} ${dxTxt > 0 ? "east" : "west"}, `
-      + `${Math.abs(dyTxt)} cell${Math.abs(dyTxt) === 1 ? "" : "s"} ${dyTxt > 0 ? "north" : "south"} `
-      + `(× to ×, arrow = corrective direction)`;
+    : `best-fit corrective shift: `
+      + `${Math.abs(dxCells)} cell${Math.abs(dxCells) === 1 ? "" : "s"} ${dxCells > 0 ? "east" : dxCells < 0 ? "west" : ""}, `
+      + `${Math.abs(dyCells)} cell${Math.abs(dyCells) === 1 ? "" : "s"} ${dyCells > 0 ? "north" : dyCells < 0 ? "south" : ""}`
+      + `${degTxt}`;
   annotations.push({
     text: shiftNote,
     xref: "paper", yref: "paper",

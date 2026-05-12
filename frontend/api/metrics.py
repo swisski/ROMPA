@@ -465,19 +465,24 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
                 obs_vals: np.ndarray, obs_lat: np.ndarray, obs_lon: np.ndarray,
                 *, case: str, threshold: float, max_shift: int,
                 include_fields: bool = True,
-                display_country: str | None = "India") -> dict:
+                display_country: str | None = "India",
+                max_payload_cells: int = 240) -> dict:
     """Run CRA decomposition and serialize the result.
 
     The forecast is regridded onto the obs grid first; both fields then
     enter ``cra_decomposition`` as same-shape numpy arrays. Field payloads
-    (obs / fcst / shifted) are stride-downsampled before being returned so
-    the response stays small for high-resolution grids.
+    (obs / fcst / shifted) are stride-downsampled to ``max_payload_cells``
+    per axis (default 240) so the response stays reasonable for
+    high-resolution grids.
 
-    ``display_country`` controls the country mask applied to the field
-    payloads only — cells outside the country are NaN'd so the frontend
-    heatmap shows the boundary cleanly. The CRA decomposition itself is
-    computed on the full grid (matching the demo's full-domain CRA
-    objective); set ``display_country=None`` to disable masking entirely.
+    ``display_country`` sets *both* the display mask (cells outside the
+    country are NaN'd in the payload so the heatmap shows the boundary
+    cleanly) and the ``verification_mask`` passed to
+    ``cra_decomposition`` — the metric scores MSE only over cells inside
+    the country, matching the demo's "India CRA objective". Without this
+    the optimizer can shift the forecast off the analysis region and
+    score artificially low because the score mask shrinks. Set
+    ``display_country=None`` to score on the full grid.
     """
     from momp.metrics.cra import cra_decomposition
 
@@ -487,12 +492,17 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
     obs_2d = np.asarray(obs_vals, dtype=float)
     fcst_2d = np.asarray(fcst_on_obs, dtype=float)
 
+    # Same region mask is used for the verification objective AND the
+    # display mask, so the maps and the scores tell a consistent story.
+    region_mask = _country_display_mask(display_country, obs_lat, obs_lon)
+
     result, shifted, _cra_mask = cra_decomposition(
         case=case,
         obs=obs_2d,
         fcst=fcst_2d,
         threshold=float(threshold),
         max_shift=int(max_shift),
+        verification_mask=region_mask,
     )
 
     payload = {
@@ -531,11 +541,10 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
         "max_shift": int(max_shift),
     }
     if include_fields:
-        display_mask = _country_display_mask(display_country, obs_lat, obs_lon)
-        if display_mask is not None:
-            obs_disp = np.where(display_mask, obs_2d, np.nan)
-            fcst_disp = np.where(display_mask, fcst_2d, np.nan)
-            shifted_disp = np.where(display_mask, shifted, np.nan)
+        if region_mask is not None:
+            obs_disp = np.where(region_mask, obs_2d, np.nan)
+            fcst_disp = np.where(region_mask, fcst_2d, np.nan)
+            shifted_disp = np.where(region_mask, shifted, np.nan)
             payload["display_country"] = display_country
         else:
             obs_disp = obs_2d
@@ -543,16 +552,25 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
             shifted_disp = shifted
             payload["display_country"] = None
         payload["fields"] = {
-            "obs": field_2d_payload(obs_disp, obs_lat, obs_lon),
-            "fcst": field_2d_payload(fcst_disp, obs_lat, obs_lon),
-            "shifted": field_2d_payload(shifted_disp, obs_lat, obs_lon),
+            "obs":     field_2d_payload(obs_disp,     obs_lat, obs_lon, max_cells=max_payload_cells),
+            "fcst":    field_2d_payload(fcst_disp,    obs_lat, obs_lon, max_cells=max_payload_cells),
+            "shifted": field_2d_payload(shifted_disp, obs_lat, obs_lon, max_cells=max_payload_cells),
         }
-        # Forecast and shifted-forecast centroids — used by the frontend
-        # to draw a visible shift arrow between them.
+        # Centroids on the full (unmasked) fields too — needed so the
+        # forecast centroid is in its real location even when the unmasked
+        # forecast spills outside India; the corrective shift then moves it
+        # toward the obs centroid inside India.
         payload["centroids"] = {
-            "fcst": _masked_centroid(fcst_disp, obs_lat, obs_lon),
-            "shifted": _masked_centroid(shifted_disp, obs_lat, obs_lon),
-            "obs": _masked_centroid(obs_disp, obs_lat, obs_lon),
+            "obs":            _masked_centroid(obs_disp,     obs_lat, obs_lon),
+            "fcst":           _masked_centroid(fcst_disp,    obs_lat, obs_lon),
+            "shifted":        _masked_centroid(shifted_disp, obs_lat, obs_lon),
+            "fcst_full":      _masked_centroid(fcst_2d,      obs_lat, obs_lon),
+            "shifted_full":   _masked_centroid(shifted,      obs_lat, obs_lon),
+        }
+        # Useful for the frontend to compute the absolute shift in lat/lon.
+        payload["grid_spacing"] = {
+            "dlat": float(abs(np.median(np.diff(obs_lat)))) if obs_lat.size > 1 else None,
+            "dlon": float(abs(np.median(np.diff(obs_lon)))) if obs_lon.size > 1 else None,
         }
     return payload
 
