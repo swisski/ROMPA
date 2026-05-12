@@ -326,6 +326,35 @@
             </footer>
           </section>
 
+          <section class="card card-wide">
+            <header class="card-head">
+              <div><span class="eyebrow">where forecast rain error comes from</span><h3>CRA decomposition (Ebert &amp; Gallus 2009)</h3></div>
+              <div class="card-meta"><span id="cra-caption">—</span></div>
+            </header>
+            <div class="cra-controls" id="cra-controls">
+              <label><span>lead start (days)</span><input id="cra_lead_start" type="number" min="0" step="1" value="1" /></label>
+              <label><span>lead end (days)</span><input id="cra_lead_end" type="number" min="0" step="1" value="15" /></label>
+              <label><span>threshold (mm)</span><input id="cra_threshold" type="number" min="0" step="0.5" value="1" /></label>
+              <label><span>max shift (cells)</span><input id="cra_max_shift" type="number" min="0" step="1" value="8" /></label>
+              <button id="cra_apply" class="apply-btn cra-apply">recompute CRA</button>
+            </div>
+            <div id="plot-cra-bars" class="plot plot-short"></div>
+            <div id="plot-cra-maps" class="plot"></div>
+            <footer class="card-foot interp" id="cra-interp">
+              CRA accumulates forecast rainfall over the lead window and
+              compares against observed rainfall over the matching valid
+              dates. The forecast is then translated by an integer number
+              of cells (up to ±max-shift) to minimize MSE against obs; the
+              residual MSE after that shift splits into a
+              <strong>volume</strong> piece (forecast too wet / too dry on
+              average) and a <strong>pattern</strong> piece (right amount,
+              wrong spatial structure). The MSE the shift recovers is the
+              <strong>displacement</strong> piece. A forecast dominated by
+              displacement error can be rescued by a coordinate correction;
+              one dominated by pattern needs structural improvement.
+            </footer>
+          </section>
+
         </section>
 
         <footer class="colophon">

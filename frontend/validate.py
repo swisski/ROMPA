@@ -198,6 +198,19 @@ def v_corp(j: dict) -> tuple[bool, str]:
     return True, f"tau={j['tau']}, resid={resid:.1e}"
 
 
+def v_cra(j: dict) -> tuple[bool, str]:
+    for k in ("case", "corrective_shift", "mse", "pct", "fields", "meta"):
+        if k not in j:
+            return False, f"missing {k}"
+    cs = j["corrective_shift"]
+    if "dx" not in cs or "dy" not in cs:
+        return False, "corrective_shift missing dx/dy"
+    pct = j["pct"]
+    parts = [pct.get(k) for k in ("displacement", "volume", "pattern")]
+    finite = [p for p in parts if isinstance(p, (int, float))]
+    return True, f"shift=({cs['dx']},{cs['dy']}) pct={['{:.0f}'.format(p) for p in finite]}"
+
+
 def v_compare(expected_rows: int):
     def _v(j: dict) -> tuple[bool, str]:
         if "rows" not in j:
@@ -312,12 +325,54 @@ def main() -> int:
         ok, note = v_corp(r.json()) if r.status_code == 200 else (False, f"HTTP {r.status_code}")
         results.record("/api/metrics/corp", r, ms, ok, note)
 
-        # 11. compare
+        # 10b. cra (single year, short max_shift to keep the demo grid fast)
+        r, ms = call(s, base, "/api/metrics/cra",
+                     {"model": model_key, "year": year, "init": 0,
+                      "lead_start": 1, "lead_end": 7,
+                      "threshold": 1.0, "max_shift": 3})
+        ok, note = v_cra(r.json()) if r.status_code == 200 else (False, f"HTTP {r.status_code}")
+        results.record("/api/metrics/cra", r, ms, ok, note)
+
+        # 10c. cra via years= (range form) — even with one year the
+        # endpoint should accept the range syntax and return n_years=1.
+        r, ms = call(s, base, "/api/metrics/cra",
+                     {"model": model_key, "years": f"{year}-{year}", "init": 0,
+                      "lead_start": 1, "lead_end": 7,
+                      "threshold": 1.0, "max_shift": 3})
+        ok, note = v_cra(r.json()) if r.status_code == 200 else (False, f"HTTP {r.status_code}")
+        results.record("/api/metrics/cra?years=", r, ms, ok, note)
+
+        # 10d. cra error paths — bad max_shift should 422.
+        r_bad, ms_bad = call(s, base, "/api/metrics/cra",
+                             {"model": model_key, "year": year, "max_shift": -1})
+        ok_bad = (r_bad.status_code == 422)
+        results.record("/api/metrics/cra(bad_max_shift)", r_bad, ms_bad, ok_bad,
+                       f"expected 422, got {r_bad.status_code}")
+
+        # 10e. cra error paths — unknown year on a per-model file should 404
+        # or be treated as missing data (handled-error path).
+        bad_year = max(m["years"][-1] for m in models) + 10
+        r_year, ms_year = call(s, base, "/api/metrics/cra",
+                               {"model": model_key, "year": bad_year})
+        ok_year = (400 <= r_year.status_code < 500)
+        results.record("/api/metrics/cra(bad_year)", r_year, ms_year, ok_year,
+                       f"expected 4xx, got {r_year.status_code}")
+
+        # 11. compare — verify CRA cells are present per row.
         keys_csv = ",".join(m["key"] for m in models[:2])
         expected = min(2, len(models))
         r, ms = call(s, base, "/api/compare",
                      {"models": keys_csv, "year": year})
-        ok, note = v_compare(expected)(r.json()) if r.status_code == 200 else (False, f"HTTP {r.status_code}")
+        if r.status_code == 200:
+            j = r.json()
+            ok, note = v_compare(expected)(j)
+            if ok:
+                # Confirm at least one row has a CRA block.
+                cra_rows = [row for row in j.get("rows", []) if "cra" in row]
+                ok = bool(cra_rows)
+                note = note + (f"; cra rows={len(cra_rows)}" if cra_rows else "; no cra in rows")
+        else:
+            ok, note = False, f"HTTP {r.status_code}"
         results.record("/api/compare", r, ms, ok, note)
 
         # 12. onset params pass-through (wet_spell=3 vs 5)

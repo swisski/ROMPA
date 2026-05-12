@@ -779,13 +779,13 @@ select {
 }
 .summary-table {
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(64px, 0.6fr) repeat(5, minmax(110px, 1fr));
+  grid-template-columns: minmax(180px, 1.4fr) minmax(64px, 0.6fr) repeat(5, minmax(110px, 1fr)) minmax(140px, 1.3fr);
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text);
   align-items: stretch;
   column-gap: 6px;
-  min-width: 820px;            /* force horizontal scroll when the card is narrower */
+  min-width: 980px;            /* force horizontal scroll when the card is narrower */
 }
 .summary-table .col-head {
   font-size: 9.5px;
@@ -930,6 +930,32 @@ select {
   pointer-events: none;
 }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ----- CRA panel ------------------------------------------------------ */
+.cra-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 8px 12px;
+  padding: 8px 0 14px;
+  align-items: end;
+}
+.cra-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.cra-controls label > span {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--paper-faint);
+  font-size: 10px;
+}
+.cra-controls input { padding: 6px 8px; }
+.cra-apply {
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .cra-controls { grid-template-columns: 1fr 1fr; }
+}
 
 /* ----- responsive ----------------------------------------------------- */
 @media (max-width: 1180px) {
