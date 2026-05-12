@@ -286,6 +286,53 @@ def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name=
         return da_masked
 
 
+def country_mask(da, region):
+    """Boolean (lat, lon) mask for a Natural Earth country, via regionmask.
+
+    Lookup is case-insensitive exact match first, then unambiguous substring.
+    Raises ``ValueError`` if the substring matches more than one country
+    (e.g. ``"Korea"`` matches both Koreas, ``"Niger"`` matches Niger and
+    Nigeria) or if no country matches at all — callers get a loud failure
+    rather than a silently mis-applied mask.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Source array; only ``da["lon"]`` and ``da["lat"]`` are used.
+    region : str
+        Country name (e.g. ``"India"``).
+
+    Returns
+    -------
+    xr.DataArray
+        Bool DataArray with dims ``(lat, lon)``; True over the country.
+    """
+    countries = regionmask.defined_regions.natural_earth_v5_0_0.countries_10
+    names_lower = [nm.lower() for nm in countries.names]
+    target = region.lower()
+    if target in names_lower:
+        idx = names_lower.index(target)
+    else:
+        hits = [i for i, nm in enumerate(names_lower) if target in nm]
+        if len(hits) == 1:
+            idx = hits[0]
+        elif len(hits) > 1:
+            matches = ", ".join(repr(countries.names[i]) for i in hits[:5])
+            raise ValueError(
+                f"region {region!r} is ambiguous — matches {matches}"
+                + (" and more" if len(hits) > 5 else "")
+                + "; use an exact country name"
+            )
+        else:
+            raise ValueError(f"region {region!r} not found in natural_earth countries")
+    mask2d = countries.mask(da["lon"], da["lat"]) == idx
+    return xr.DataArray(
+        np.asarray(mask2d.values, dtype=bool),
+        dims=("lat", "lon"),
+        coords={"lat": da["lat"], "lon": da["lon"]},
+    )
+
+
 def shp_outline(ax, region='Ethiopia', resolution='10m', category='cultural', name='admin_0_countries'):
     """ add shapefile country boundaries to plot"""
 

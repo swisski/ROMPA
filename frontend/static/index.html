@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ROMP · Onset Observatory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..800,0..100,0..1;1,9..144,300..700,0..100,0..1&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="frame">
+
+    <header class="masthead">
+      <div class="wordmark">
+        <div class="wm-tag">Rainy-season Onset Metrics Package</div>
+        <h1>ROMP<span class="wm-dot">·</span><em>Onset Observatory</em></h1>
+        <div class="wm-sub">verification for the advancing front</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-dl">
+          <dt>Catalog</dt><dd id="meta-catalog">…</dd>
+          <dt>Obs</dt><dd id="meta-obs">—</dd>
+          <dt>Mask</dt><dd id="meta-mask">—</dd>
+          <dt>Status</dt><dd id="meta-status" class="status">loading</dd>
+        </dl>
+      </div>
+    </header>
+
+    <div class="contour-rule"></div>
+
+    <div class="layout">
+
+      <aside class="sidebar">
+        <section class="cntrl">
+          <h2 class="cntrl-head">Comparison</h2>
+
+          <div class="field">
+            <span>Year range</span>
+            <div class="year-range">
+              <select id="year_from"></select>
+              <span class="year-range-sep">→</span>
+              <select id="year_to"></select>
+            </div>
+            <div class="year-range-actions">
+              <button type="button" class="mini-btn" data-yr="1">single</button>
+              <button type="button" class="mini-btn" data-yr="5">last 5</button>
+              <button type="button" class="mini-btn" data-yr="10">last 10</button>
+              <button type="button" class="mini-btn" data-yr="all">all</button>
+            </div>
+            <div class="field-hint" id="year-hint">aggregates per-year metrics across the range</div>
+          </div>
+
+          <div class="field">
+            <span>Models</span>
+            <div class="chips" id="models"></div>
+          </div>
+
+          <label class="field">
+            <span>Iso year (hero only)</span>
+            <select id="iso_year"></select>
+            <div class="field-hint">single year for the isochrone overlay; defaults to the middle of the range</div>
+          </label>
+
+          <label class="field">
+            <span>Init for iso year</span>
+            <select id="init"><option value="auto">auto-select overlap</option></select>
+            <div class="field-hint" id="init-hint">auto picks the init whose onset range overlaps obs</div>
+          </label>
+        </section>
+
+        <section class="cntrl">
+          <h2 class="cntrl-head">Onset criteria <span class="cntrl-subhead">momp.stats.detect</span></h2>
+
+          <p class="cntrl-body">
+            "Onset" = the first <em>wet spell</em> of the season. A cell
+            fires if <strong>every one of wet_spell consecutive days</strong>
+            exceeds <code>wet_init</code> mm/day, <strong>and</strong> the
+            sum over those days exceeds <code>wet_threshold</code> mm.
+            Optional dry-spell check (<code>dry_spell</code>,
+            <code>dry_threshold</code>, <code>dry_extent</code>): if
+            enabled, a candidate onset is rejected when a
+            <code>dry_spell</code>-day dry period begins within
+            <code>dry_extent</code> days after it — guards against
+            false-onset from pre-monsoon showers that fizzle out.
+          </p>
+          <div class="param-grid" id="params"></div>
+          <button class="apply-btn" id="apply">recompute</button>
+          <div class="field-hint">
+            Changing any of these re-runs detection from scratch against
+            the raw rainfall — first recompute takes a few seconds for
+            deterministic models, up to a minute for 51-member ensembles.
+          </div>
+        </section>
+
+        <section class="cntrl">
+          <h2 class="cntrl-head">Region <span class="cntrl-subhead">bbox</span></h2>
+          <div class="bbox-grid">
+            <label><span>lat min</span><input id="lat_min" type="number" step="0.5" placeholder="auto" /></label>
+            <label><span>lat max</span><input id="lat_max" type="number" step="0.5" placeholder="auto" /></label>
+            <label><span>lon min</span><input id="lon_min" type="number" step="0.5" placeholder="auto" /></label>
+            <label><span>lon max</span><input id="lon_max" type="number" step="0.5" placeholder="auto" /></label>
+          </div>
+        </section>
+
+        <section class="cntrl footer-block">
+          <div class="legend-card">
+            <div class="legend-head">legend</div>
+            <div class="legend-row"><span class="swatch solid"></span>forecast isochrone</div>
+            <div class="legend-row"><span class="swatch dashed"></span>observed isochrone</div>
+            <div class="legend-row"><span class="swatch det"></span>deterministic</div>
+            <div class="legend-row"><span class="swatch ens"></span>ensemble mean / prob</div>
+          </div>
+        </section>
+      </aside>
+
+      <main class="main">
+
+        <section class="usage-hint" id="usage-hint">
+          <div class="usage-row">
+            <span class="usage-step"><span class="usage-num">1</span> pick models</span>
+            <span class="usage-arrow">→</span>
+            <span class="usage-step"><span class="usage-num">2</span> tune onset criteria</span>
+            <span class="usage-arrow">→</span>
+            <span class="usage-step"><span class="usage-num">3</span> recompute</span>
+          </div>
+          <p class="usage-body">
+            Chips are <strong>multi-select</strong>. The leftmost active chip is the
+            <span class="usage-primary">primary model</span> — it drives the hero isochrone,
+            CRPS field, CORP diagram, displacement, and FSS matrix. Every active model
+            appears as a row in the summary table and a line in the progression curve.
+            <span class="usage-note">First request takes ~3–10 s while the onset detector runs; subsequent requests are cached.</span>
+          </p>
+        </section>
+
+        <div class="low-n-banner" id="low-n-banner" hidden>
+          <strong>Low-n caveat:</strong>
+          <span id="low-n-text">—</span>
+        </div>
+
+        <section class="summary" id="summary-section">
+          <div class="summary-head">
+            <span class="eyebrow">cross-model scalars at a glance</span>
+            <span class="summary-year" id="summary-year">—</span>
+          </div>
+          <div class="summary-table-wrap">
+            <div class="summary-table" id="summary-table">
+              <div class="summary-placeholder">select year and models to compute</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card card-hero">
+          <header class="card-head">
+            <div>
+              <h3>Isochrone overlay</h3>
+            </div>
+            <div class="card-meta">
+              <span class="legend-row"><span class="swatch solid-marked"></span>forecast · solid + circles</span>
+              <span class="legend-row"><span class="swatch dashed"></span>observed · dashed halo</span>
+            </div>
+          </header>
+          <div id="plot-isochrones" class="plot-hero"></div>
+          <footer class="card-foot interp" id="iso-interp">
+            Each color is one DOY. Three visual cues per day, always
+            legible even when fcst and obs coincide exactly:
+            <strong>the crisp solid line with open circles</strong>
+            is the forecast onset front; <strong>the wider, softer
+            dashed halo</strong> beneath it is the observed front.
+            Where they agree exactly you'll see the circles riding
+            inside the halo; where they diverge the circles sit in
+            one place and the halo in another — unambiguous.
+            <strong>Smaller gap = better spatial agreement.</strong>
+            <br>
+            Background shading is the <strong>obs "monsoon has
+            visited" region per DOY</strong>: each cell is tinted with
+            the colour of the *first* iso DOY by which obs onset
+            arrived there. Cells visited even later than the latest
+            iso DOY plotted still fall into the last band so every
+            land-and-onset cell gets shaded. A forecast contour is
+            doing well when its crisp line tracks the boundary
+            between its colour band and the next-later one. A forecast
+            line sitting *inside* the band of its colour means the
+            model thinks the front is further south than obs
+            (forecast late); *outside* the band means the model thinks
+            the front is further north (forecast early).
+            <br>
+            Obs contours can appear as <strong>closed loops</strong>
+            rather than single south-to-north arcs: this is geographically
+            correct, not a viz bug. Real obs has interior NaN cells
+            (where the detector didn't fire), and the level-set boundary
+            on a finite domain with internal holes is a closed curve.
+            Synthetic forecasts have monotone-in-lat onset fields →
+            their level sets are just horizontal arcs → open lines. Both
+            tell you the same thing about *where the visited region
+            ends*; the visual asymmetry is real-data signal, not noise.
+            <br>
+            Hausdorff (worst-point) and Fréchet (path-aware) distances
+            per day below. Gray cells are <strong>no observed onset</strong>
+            within the 1 May–30 Sep window; the dashed contour traces
+            the data/no-data boundary in those regions, not a real
+            DOY transition.
+          </footer>
+          <footer class="card-foot" id="iso-distances"></footer>
+        </section>
+
+        <section class="card-grid">
+
+          <section class="card">
+            <header class="card-head">
+              <div><span class="eyebrow">area of disagreement through the season</span><h3>Progression curve</h3></div>
+              <div class="card-meta"><span id="progression-caption">—</span></div>
+            </header>
+            <div id="plot-progression" class="plot"></div>
+            <footer class="card-foot interp" id="progression-interp">
+              Each model is a line; x-axis is DOY, y is the area of
+              disagreement between forecast and observed "onset-by-day"
+              masks, in 10⁶ km². <strong>IOE</strong> rises when the
+              forecast front is in the wrong place at that day; it peaks
+              mid-season when the front is moving fastest and collapses
+              to zero once both fields agree "onset everywhere" late in
+              the season. <strong>SPS</strong> (dotted) is the ensemble
+              generalisation — per-cell Brier score of
+              <code>P(onset ≤ d)</code> against the observed indicator;
+              it's always ≤ IOE for the same data (soft probabilities
+              beat hard indicators).
+              Lower is better. For multi-year ranges the line is the
+              per-day median across years; the shaded band is a
+              <strong>95% bootstrap confidence interval</strong> on
+              that median (percentile-method pair bootstrap on the
+              year axis), so non-overlapping bands between two models
+              indicate a statistically distinguishable difference at
+              that day. The dashed vertical line marks the primary
+              model's <strong>IOE peak DOY</strong> — the day at which
+              the front is most wrong. A late-peaking model lags; an
+              early-peaking model leads, even when their
+              season-integrated totals match. Year-to-year IQR is
+              reported in the JSON for each <code>_q25</code> /
+              <code>_q75</code> key but is no longer drawn here, to
+              keep the multi-model chart legible.
+            </footer>
+          </section>
+
+          <section class="card">
+            <header class="card-head">
+              <div><span class="eyebrow">probabilistic calibration curve</span><h3>Reliability</h3></div>
+              <div class="card-meta"><span id="corp-caption">—</span></div>
+            </header>
+            <div id="plot-corp" class="plot"></div>
+            <footer class="card-foot corp-breakdown" id="corp-breakdown"></footer>
+            <footer class="card-foot interp" id="corp-interp">
+              BS = MCB − DSC + UNC is a proper-score identity (residual
+              should be ~0). <strong>N</strong> counts pooled (forecast
+              probability, observation) pairs across cells × years.
+              <strong>N_eff</strong> corrects for spatial autocorrelation
+              (Dutilleul 1993: <code>n · (1 − I) / (1 + I)</code> where I
+              is the per-year rook-contiguity Moran's I on the observed
+              indicator); take N_eff as the honest independent-sample
+              count when reading confidence statements. N_eff = N would
+              mean zero spatial autocorrelation, which is effectively
+              never true on a contiguous onset field.
+            </footer>
+          </section>
+
+          <section class="card">
+            <header class="card-head">
+              <div><span class="eyebrow">per-cell forecast error in days</span><h3>CRPS field</h3></div>
+              <div class="card-meta"><span id="crps-caption">—</span></div>
+            </header>
+            <div id="plot-crps" class="plot"></div>
+            <footer class="card-foot interp" id="crps-interp">
+              Per-cell CRPS in days, <strong>lower is better</strong>
+              (0 = perfect). The "no-onset" atom is handled by mapping
+              NaT to a sentinel beyond the season window before the
+              Hersbach ensemble CRPS is evaluated — a proper score for
+              the mixed atom+continuous distribution, related to but
+              not identical with Hemri et al. 2014's analytical
+              censored-Gaussian CRPS. For ≥ 2-member ensembles we use
+              the <strong>Ferro 2014 fair correction</strong> so the
+              finite-ensemble bias doesn't penalise small ensembles
+              (e.g. IFS-S2S's 11 members) relative to large ones.
+              Single-member (deterministic) forecasts reduce to
+              sentinel-augmented MAE.
+            </footer>
+          </section>
+
+          <section class="card">
+            <header class="card-head">
+              <div><span class="eyebrow">geographic bias of the onset region</span><h3>Displacement + area bias</h3></div>
+            </header>
+            <div id="plot-displacement" class="plot"></div>
+            <footer class="card-foot interp" id="displacement-interp">
+              For each "onset-by-DOY" threshold, we ask two questions of
+              the forecast's onset region vs observation's:
+              <strong>(1) how far is the forecast's centroid from obs
+              centroid?</strong> (blue, great-circle km on the left axis),
+              and <strong>(2) does the forecast cover more or less area
+              than obs?</strong> (amber, % on the right axis; positive =
+              forecast region too large, negative = too small).
+              Near-zero on both = spatially unbiased forecast at that
+              threshold. A sustained positive area-bias with small
+              centroid shift means the forecast is "everywhere wet too
+              early" rather than geographically misplaced.
+            </footer>
+          </section>
+
+          <section class="card card-wide">
+            <header class="card-head">
+              <div><span class="eyebrow">spatial skill vs neighborhood size</span><h3>Fractions skill vs neighborhood</h3></div>
+              <div class="card-meta"><span id="fss-caption">—</span></div>
+            </header>
+            <div id="plot-fss" class="plot plot-short"></div>
+            <footer class="card-foot interp" id="fss-interp">
+              One line per onset-by-DOY threshold. <strong>FSS rises with
+              neighborhood</strong> as the forecast gets credit for being
+              spatially close; the question is how big a neighborhood it
+              takes to be useful. The faint dotted line per color is that
+              threshold's <strong>useful</strong> bar (<code>0.5 + 0.5·p</code>); the
+              faint dash-dot is its <strong>no-skill</strong> bar
+              (<code>FSS = p</code>, what a base-rate-only forecast scores).
+              <code>p</code> is the obs base rate at that DOY threshold.
+            </footer>
+          </section>
+
+        </section>
+
+        <footer class="colophon">
+          <div class="colophon-line"></div>
+          <div class="colophon-text">
+            <span>ROMP onset observatory</span>
+            <span>data · <code id="colophon-root">—</code></span>
+            <span>FastAPI + Plotly · no build step</span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
