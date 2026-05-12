@@ -144,6 +144,7 @@ const state = {
   busy: false,
   progressionShowDecomp: false,
   plotDivs: new Set(),
+  cra: { leadStart: 1, leadEnd: 15, threshold: 1.0, maxShift: 8 },
 };
 
 function selectedYears() {
@@ -1524,8 +1525,171 @@ function markPanelsLoading(on) {
     "plot-crps",
     "plot-displacement",
     "plot-fss",
+    "plot-cra-bars",
+    "plot-cra-maps",
   ].forEach(id => setLoading($(id), on));
   setLoading($("summary-table"), on);
+}
+
+/* ------------------------------------------------------------------ *
+ * CRA — Contiguous Rain Area decomposition (single-year, single-init)
+ * ------------------------------------------------------------------ */
+
+function renderCraBars(out) {
+  const div = $("plot-cra-bars");
+  if (!div) return;
+  const pct = out.pct || {};
+  const cells = [
+    { key: "displacement", color: "#4a90e2", label: "displacement" },
+    { key: "volume",       color: "#f0b264", label: "volume" },
+    { key: "pattern",      color: "#bd6dd6", label: "pattern" },
+  ];
+  const traces = cells.map(c => ({
+    type: "bar",
+    orientation: "h",
+    x: [pct[c.key] == null ? 0 : pct[c.key]],
+    y: ["MSE"],
+    name: c.label,
+    marker: { color: c.color },
+    hovertemplate: `${c.label}: %{x:.1f}%<extra></extra>`,
+  }));
+  const layout = mergeLayout(PLOT_LAYOUT, {
+    barmode: "stack",
+    xaxis: { range: [0, 100], title: "% of forecast MSE", ticksuffix: "%" },
+    yaxis: { showticklabels: false },
+    margin: { l: 30, r: 20, t: 16, b: 36 },
+    height: 130,
+    legend: { orientation: "h", y: -0.35 },
+  });
+  Plotly.react(div, traces, layout, PLOT_CONFIG);
+  rememberPlot(div);
+}
+
+function renderCraMaps(out) {
+  const div = $("plot-cra-maps");
+  if (!div) return;
+  const f = out.fields || {};
+  if (!f.obs || !f.fcst || !f.shifted) {
+    Plotly.purge(div);
+    div.innerHTML = `<div class="plot-error">CRA: field payload missing</div>`;
+    return;
+  }
+  // Compute a shared color scale across the three panels.
+  const flat = [...f.obs.values, ...f.fcst.values, ...f.shifted.values].flat();
+  const finite = flat.filter(v => Number.isFinite(v));
+  const vmax = finite.length ? Math.max(1, percentile(finite, 0.98)) : 1;
+
+  const panels = [
+    { title: "Observed",          data: f.obs,      xa: "x",  ya: "y"  },
+    { title: "Forecast (raw)",    data: f.fcst,     xa: "x2", ya: "y2" },
+    { title: "Forecast (shifted)", data: f.shifted, xa: "x3", ya: "y3" },
+  ];
+  const traces = panels.map((p, idx) => ({
+    type: "heatmap",
+    z: p.data.values, x: p.data.lon, y: p.data.lat,
+    colorscale: "YlGnBu", reversescale: false,
+    zmin: 0, zmax: vmax,
+    showscale: idx === panels.length - 1,
+    colorbar: idx === panels.length - 1 ? { title: "mm", thickness: 12, len: 0.9 } : undefined,
+    xaxis: p.xa, yaxis: p.ya,
+    hovertemplate: `${p.title}<br>lat=%{y:.2f} lon=%{x:.2f}<br>%{z:.1f} mm<extra></extra>`,
+  }));
+  const cs = out.corrective_shift || { dx: 0, dy: 0 };
+  const shiftNote = (cs.dx === 0 && cs.dy === 0)
+    ? "best-fit shift: 0 cells"
+    : `best-fit shift: dx=${cs.dx}, dy=${cs.dy} cells (forecast moved to match obs)`;
+  const annotations = panels.map((p, idx) => ({
+    text: p.title,
+    xref: `${p.xa} domain`, yref: `${p.ya} domain`,
+    x: 0.02, y: 1.06, xanchor: "left", yanchor: "bottom",
+    showarrow: false, font: { size: 11, color: "#e4ddc9" },
+  }));
+  annotations.push({
+    text: shiftNote,
+    xref: "paper", yref: "paper",
+    x: 0, y: -0.18, xanchor: "left",
+    showarrow: false, font: { size: 11, color: "#a8a291" },
+  });
+  const layout = mergeLayout(PLOT_LAYOUT, {
+    grid: { rows: 1, columns: 3, pattern: "independent" },
+    xaxis:  { title: "lon", domain: [0.00, 0.32] },
+    yaxis:  { title: "lat", scaleanchor: "x" },
+    xaxis2: { title: "lon", domain: [0.34, 0.66] },
+    yaxis2: { title: "",    matches: "y", showticklabels: false },
+    xaxis3: { title: "lon", domain: [0.68, 1.00] },
+    yaxis3: { title: "",    matches: "y", showticklabels: false },
+    height: 360,
+    margin: { l: 50, r: 30, t: 36, b: 56 },
+    annotations,
+    showlegend: false,
+  });
+  Plotly.react(div, traces, layout, PLOT_CONFIG);
+  rememberPlot(div);
+}
+
+function percentile(arr, q) {
+  // simple, O(n log n); arr is finite floats only
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(q * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+function craCaptionText(out) {
+  const meta = out.meta || {};
+  const pct = out.pct || {};
+  const mse = out.mse || {};
+  const fmt = v => (v == null || !Number.isFinite(v)) ? "—" : v.toFixed(1);
+  const parts = [
+    `${meta.model || ""} · ${meta.year || ""} · init ${meta.init_time || "?"}`,
+    `leads ${meta.lead_start}–${meta.lead_end} (valid ${meta.valid_start} → ${meta.valid_end})`,
+    `displacement ${fmt(pct.displacement)}% · volume ${fmt(pct.volume)}% · pattern ${fmt(pct.pattern)}%`,
+    `MSE total ${fmt(mse.total)} → shifted ${fmt(mse.shifted)}`,
+  ];
+  return parts.join(" · ");
+}
+
+function craArgs() {
+  const model = primaryModelKey();
+  // CRA needs a single year + a concrete (non-"auto") init index.
+  const year  = state.isoYear ?? selectedYears().slice(-1)[0];
+  const rawInit = state.init;
+  const init = (rawInit === "auto" || rawInit == null || rawInit === "") ? 0 : Number(rawInit);
+  return {
+    model,
+    year,
+    init: Number.isFinite(init) ? init : 0,
+    lead_start: state.cra.leadStart,
+    lead_end:   state.cra.leadEnd,
+    threshold:  state.cra.threshold,
+    max_shift:  state.cra.maxShift,
+  };
+}
+
+async function refreshCra() {
+  const args = craArgs();
+  if (!args.model || !args.year) {
+    const cap = $("cra-caption"); if (cap) cap.textContent = "select a model and year";
+    try { Plotly.purge($("plot-cra-bars")); Plotly.purge($("plot-cra-maps")); } catch (_) {}
+    return;
+  }
+  setLoading($("plot-cra-bars"), true);
+  setLoading($("plot-cra-maps"), true);
+  try {
+    const out = await apiGet("/api/metrics/cra", qs(args));
+    renderCraBars(out);
+    renderCraMaps(out);
+    const cap = $("cra-caption"); if (cap) cap.textContent = craCaptionText(out);
+  } catch (err) {
+    console.error("cra failed", err);
+    const cap = $("cra-caption"); if (cap) cap.textContent = `error: ${err.message}`;
+    try { Plotly.purge($("plot-cra-bars")); } catch (_) {}
+    try { Plotly.purge($("plot-cra-maps")); } catch (_) {}
+    const bars = $("plot-cra-bars");
+    if (bars) bars.innerHTML = `<div class="plot-error">CRA: ${err.message}</div>`;
+  } finally {
+    setLoading($("plot-cra-bars"), false);
+    setLoading($("plot-cra-maps"), false);
+  }
 }
 
 async function refresh() {
@@ -1634,8 +1798,10 @@ async function refresh() {
       })
       .finally(() => setLoading($("plot-fss"), false));
 
+    const craPromise = refreshCra();
+
     await Promise.allSettled([
-      comparePromise, statePromise, crpsPromise, dispPromise, corpPromise, fssPromise,
+      comparePromise, statePromise, crpsPromise, dispPromise, corpPromise, fssPromise, craPromise,
     ]);
 
     setStatus("ready", "ok");
@@ -1710,6 +1876,23 @@ function bindControls() {
     state.init = $("init").value || "auto";
     refresh();
   });
+
+  // CRA controls — only recompute the CRA panel, not the whole dashboard.
+  const craBind = (id, key, isFloat) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const raw = el.value;
+      const v = isFloat ? Number.parseFloat(raw) : Number.parseInt(raw, 10);
+      if (Number.isFinite(v)) state.cra[key] = v;
+    });
+  };
+  craBind("cra_lead_start", "leadStart", false);
+  craBind("cra_lead_end",   "leadEnd",   false);
+  craBind("cra_threshold",  "threshold", true);
+  craBind("cra_max_shift",  "maxShift",  false);
+  const craApply = $("cra_apply");
+  if (craApply) craApply.addEventListener("click", () => { refreshCra(); });
 
   window.addEventListener("resize", () => {
     for (const d of state.plotDivs) {

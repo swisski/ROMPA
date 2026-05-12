@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ROMP metrics API", version="0.3.4-iso-shading", lifespan=lifespan)
+app = FastAPI(title="ROMP metrics API", version="0.4.0-cra", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
@@ -124,16 +124,19 @@ def clear_cache():
     keep seeing stale detection output. Returns the number of entries
     dropped from each cache for visibility."""
     from .onset import _obs_cache, _fcst_cache, _init_cache
+    from . import rainfall as R
     dropped = {
         "obs_onset": len(_obs_cache),
         "fcst_onset": len(_fcst_cache),
         "init_list": len(_init_cache),
         "land_mask": len(_LAND_MASK_CACHE),
+        "rainfall_accum": len(R._fcst_accum_cache) + len(R._obs_accum_cache),
     }
     _obs_cache.clear()
     _fcst_cache.clear()
     _init_cache.clear()
     _LAND_MASK_CACHE.clear()
+    R.clear_caches()
     load_catalog.cache_clear()
     return {"ok": True, "cleared": dropped}
 
@@ -590,6 +593,55 @@ def corp(
     out["moran_i"] = None if mean_mi != mean_mi else mean_mi
     out["n_effective"] = int(round(n_eff_per_year * len(bundles)))
     return out
+
+
+@app.get("/api/metrics/cra")
+def cra(
+    model: str,
+    year: int,
+    init: int = 0,
+    lead_start: int = 1,
+    lead_end: int = 15,
+    threshold: float = 1.0,
+    max_shift: int = 8,
+):
+    """Contiguous Rain Area decomposition for one (model, year, init, lead window).
+
+    Returns the displacement / volume / pattern MSE breakdown along with
+    the corrective shift vector and stride-downsampled obs / forecast /
+    shifted accumulation fields for visualization.
+    """
+    from . import rainfall as R
+    if max_shift < 0 or max_shift > 32:
+        raise HTTPException(422, "max_shift must be in 0..32")
+    if lead_end < lead_start or lead_start < 0:
+        raise HTTPException(422, "lead window invalid: require 0 <= lead_start <= lead_end")
+    try:
+        fa = R.get_forecast_accum(model, int(year), int(init),
+                                  int(lead_start), int(lead_end))
+    except (IndexError, ValueError) as exc:
+        raise HTTPException(422, str(exc))
+    valid_start, valid_end = R.valid_window(fa.init_time, lead_start, lead_end)
+    oa = R.get_obs_accum(int(year), valid_start, valid_end)
+
+    case = f"{model}_{int(year)}_init{fa.init_time:%Y%m%d}_lead{lead_start}-{lead_end}"
+    payload = M.compute_cra(
+        fa.rainfall, fa.lat, fa.lon,
+        oa.rainfall, oa.lat, oa.lon,
+        case=case, threshold=float(threshold), max_shift=int(max_shift),
+    )
+    payload["meta"] = {
+        "model": model,
+        "year": int(year),
+        "init_idx": int(init),
+        "init_time": fa.init_time.strftime("%Y-%m-%d"),
+        "valid_start": valid_start.strftime("%Y-%m-%d"),
+        "valid_end": valid_end.strftime("%Y-%m-%d"),
+        "lead_start": int(lead_start),
+        "lead_end": int(lead_end),
+        "n_members": fa.n_members,
+    }
+    return payload
 
 
 @app.get("/api/compare")

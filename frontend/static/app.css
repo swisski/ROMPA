@@ -931,6 +931,32 @@ select {
 }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
+/* ----- CRA panel ------------------------------------------------------ */
+.cra-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 8px 12px;
+  padding: 8px 0 14px;
+  align-items: end;
+}
+.cra-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.cra-controls label > span {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--paper-faint);
+  font-size: 10px;
+}
+.cra-controls input { padding: 6px 8px; }
+.cra-apply {
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .cra-controls { grid-template-columns: 1fr 1fr; }
+}
+
 /* ----- responsive ----------------------------------------------------- */
 @media (max-width: 1180px) {
   /* Narrow: revert to single-column body scroll. */

@@ -198,6 +198,19 @@ def v_corp(j: dict) -> tuple[bool, str]:
     return True, f"tau={j['tau']}, resid={resid:.1e}"
 
 
+def v_cra(j: dict) -> tuple[bool, str]:
+    for k in ("case", "corrective_shift", "mse", "pct", "fields", "meta"):
+        if k not in j:
+            return False, f"missing {k}"
+    cs = j["corrective_shift"]
+    if "dx" not in cs or "dy" not in cs:
+        return False, "corrective_shift missing dx/dy"
+    pct = j["pct"]
+    parts = [pct.get(k) for k in ("displacement", "volume", "pattern")]
+    finite = [p for p in parts if isinstance(p, (int, float))]
+    return True, f"shift=({cs['dx']},{cs['dy']}) pct={['{:.0f}'.format(p) for p in finite]}"
+
+
 def v_compare(expected_rows: int):
     def _v(j: dict) -> tuple[bool, str]:
         if "rows" not in j:
@@ -311,6 +324,14 @@ def main() -> int:
                      {"model": model_key, "year": year, "tau": 170})
         ok, note = v_corp(r.json()) if r.status_code == 200 else (False, f"HTTP {r.status_code}")
         results.record("/api/metrics/corp", r, ms, ok, note)
+
+        # 10b. cra (single init, short max_shift to keep the demo grid fast)
+        r, ms = call(s, base, "/api/metrics/cra",
+                     {"model": model_key, "year": year, "init": 0,
+                      "lead_start": 1, "lead_end": 7,
+                      "threshold": 1.0, "max_shift": 3})
+        ok, note = v_cra(r.json()) if r.status_code == 200 else (False, f"HTTP {r.status_code}")
+        results.record("/api/metrics/cra", r, ms, ok, note)
 
         # 11. compare
         keys_csv = ",".join(m["key"] for m in models[:2])

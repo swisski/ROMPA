@@ -54,6 +54,39 @@ def _as_list(a) -> list:
     return [None if not np.isfinite(x) else float(x) for x in arr.ravel()]
 
 
+def _downsample_2d(arr: np.ndarray, max_cells: int = 80) -> np.ndarray:
+    """Stride-downsample a 2-D array so the longer axis fits in ``max_cells``.
+
+    For payloads where the consumer is a JS heatmap, sending the full
+    high-res grid wastes bandwidth and is invisible at typical viewport
+    sizes. Returns the array unchanged if both axes already fit."""
+    if arr.ndim != 2:
+        return arr
+    h, w = arr.shape
+    step = max(1, max(h, w) // max_cells)
+    return arr[::step, ::step] if step > 1 else arr
+
+
+def field_2d_payload(values: np.ndarray, lat: np.ndarray, lon: np.ndarray,
+                     max_cells: int = 80) -> dict:
+    """JSON-friendly 2-D field payload, stride-downsampled for transit."""
+    vals = _downsample_2d(np.asarray(values, dtype=float), max_cells=max_cells)
+    lat_d = lat[::max(1, max(values.shape) // max_cells)]
+    lon_d = lon[::max(1, max(values.shape) // max_cells)]
+    # The stride above can be off-by-one against the data; recompute properly.
+    step = max(1, max(values.shape) // max_cells)
+    lat_d = np.asarray(lat[::step], dtype=float)
+    lon_d = np.asarray(lon[::step], dtype=float)
+    return {
+        "lat": lat_d.tolist(),
+        "lon": lon_d.tolist(),
+        "values": [
+            [None if not np.isfinite(v) else float(v) for v in row]
+            for row in vals
+        ],
+    }
+
+
 def field_payload(da: xr.DataArray) -> dict:
     return {
         "lat": da["lat"].values.tolist(),
@@ -388,3 +421,91 @@ def compute_corp(ens: xr.DataArray | None, fcst: xr.DataArray,
         },
         "forecast_prob_histogram": _as_list(decomp.forecast_prob),
     }
+
+
+def _align_forecast_to_obs_grid(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarray,
+                                obs_lat: np.ndarray, obs_lon: np.ndarray) -> np.ndarray:
+    """Nearest-neighbor regrid a 2-D forecast accumulation onto the obs grid."""
+    if (fcst_lat.shape == obs_lat.shape and np.allclose(fcst_lat, obs_lat)
+            and fcst_lon.shape == obs_lon.shape and np.allclose(fcst_lon, obs_lon)):
+        return fcst_vals
+    da = xr.DataArray(
+        fcst_vals, dims=("lat", "lon"),
+        coords={"lat": fcst_lat, "lon": fcst_lon},
+    )
+    target = xr.DataArray(
+        np.zeros((obs_lat.size, obs_lon.size)),
+        dims=("lat", "lon"), coords={"lat": obs_lat, "lon": obs_lon},
+    )
+    return np.asarray(da.interp_like(target, method="nearest").values, dtype=float)
+
+
+def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarray,
+                obs_vals: np.ndarray, obs_lat: np.ndarray, obs_lon: np.ndarray,
+                *, case: str, threshold: float, max_shift: int,
+                include_fields: bool = True) -> dict:
+    """Run CRA decomposition and serialize the result.
+
+    The forecast is regridded onto the obs grid first; both fields then
+    enter ``cra_decomposition`` as same-shape numpy arrays. Field payloads
+    (obs / fcst / shifted) are stride-downsampled before being returned so
+    the response stays small for high-resolution grids.
+    """
+    from momp.metrics.cra import cra_decomposition
+
+    fcst_on_obs = _align_forecast_to_obs_grid(
+        fcst_vals, fcst_lat, fcst_lon, obs_lat, obs_lon,
+    )
+    obs_2d = np.asarray(obs_vals, dtype=float)
+    fcst_2d = np.asarray(fcst_on_obs, dtype=float)
+
+    result, shifted, _cra_mask = cra_decomposition(
+        case=case,
+        obs=obs_2d,
+        fcst=fcst_2d,
+        threshold=float(threshold),
+        max_shift=int(max_shift),
+    )
+
+    payload = {
+        "case": result.case,
+        "corrective_shift": {
+            "dx": int(result.corrective_shift_dx),
+            "dy": int(result.corrective_shift_dy),
+        },
+        "diagnosed_forecast_error": {
+            "dx": int(result.diagnosed_forecast_error_dx),
+            "dy": int(result.diagnosed_forecast_error_dy),
+        },
+        "mse": {
+            "total": _none_if_nan(result.mse_total),
+            "shifted": _none_if_nan(result.mse_shifted),
+            "displacement": _none_if_nan(result.mse_displacement),
+            "volume": _none_if_nan(result.mse_volume),
+            "pattern": _none_if_nan(result.mse_pattern),
+        },
+        "pct": {
+            "displacement": _none_if_nan(result.pct_displacement),
+            "volume": _none_if_nan(result.pct_volume),
+            "pattern": _none_if_nan(result.pct_pattern),
+        },
+        "n_obs_objects": int(result.n_obs_objects),
+        "n_fcst_objects": int(result.n_fcst_objects),
+        "mean_obs": _none_if_nan(result.mean_obs),
+        "mean_fcst_shifted": _none_if_nan(result.mean_fcst_shifted),
+        "peak_obs": _none_if_nan(result.peak_obs),
+        "peak_fcst_shifted": _none_if_nan(result.peak_fcst_shifted),
+        "spatial_corr": {
+            "original": _none_if_nan(result.spatial_corr_original),
+            "shifted": _none_if_nan(result.spatial_corr_shifted),
+        },
+        "threshold": float(threshold),
+        "max_shift": int(max_shift),
+    }
+    if include_fields:
+        payload["fields"] = {
+            "obs": field_2d_payload(obs_2d, obs_lat, obs_lon),
+            "fcst": field_2d_payload(fcst_2d, obs_lat, obs_lon),
+            "shifted": field_2d_payload(shifted, obs_lat, obs_lon),
+        }
+    return payload
