@@ -595,45 +595,28 @@ def corp(
     return out
 
 
-@app.get("/api/metrics/cra")
-def cra(
-    model: str,
-    year: int,
-    init: int = 0,
-    lead_start: int = 1,
-    lead_end: int = 15,
-    threshold: float = 1.0,
-    max_shift: int = 8,
-):
-    """Contiguous Rain Area decomposition for one (model, year, init, lead window).
-
-    Returns the displacement / volume / pattern MSE breakdown along with
-    the corrective shift vector and stride-downsampled obs / forecast /
-    shifted accumulation fields for visualization.
-    """
+def _cra_one_year(
+    model_key: str, year: int, init_idx: int,
+    *, lead_start: int, lead_end: int, threshold: float, max_shift: int,
+    include_fields: bool,
+) -> dict:
+    """Run CRA for one (model, year, init) and return the JSON-ready payload."""
     from . import rainfall as R
-    if max_shift < 0 or max_shift > 32:
-        raise HTTPException(422, "max_shift must be in 0..32")
-    if lead_end < lead_start or lead_start < 0:
-        raise HTTPException(422, "lead window invalid: require 0 <= lead_start <= lead_end")
-    try:
-        fa = R.get_forecast_accum(model, int(year), int(init),
-                                  int(lead_start), int(lead_end))
-    except (IndexError, ValueError) as exc:
-        raise HTTPException(422, str(exc))
+    fa = R.get_forecast_accum(model_key, int(year), int(init_idx),
+                              int(lead_start), int(lead_end))
     valid_start, valid_end = R.valid_window(fa.init_time, lead_start, lead_end)
     oa = R.get_obs_accum(int(year), valid_start, valid_end)
-
-    case = f"{model}_{int(year)}_init{fa.init_time:%Y%m%d}_lead{lead_start}-{lead_end}"
+    case = f"{model_key}_{int(year)}_init{fa.init_time:%Y%m%d}_lead{lead_start}-{lead_end}"
     payload = M.compute_cra(
         fa.rainfall, fa.lat, fa.lon,
         oa.rainfall, oa.lat, oa.lon,
         case=case, threshold=float(threshold), max_shift=int(max_shift),
+        include_fields=include_fields,
     )
     payload["meta"] = {
-        "model": model,
+        "model": model_key,
         "year": int(year),
-        "init_idx": int(init),
+        "init_idx": int(init_idx),
         "init_time": fa.init_time.strftime("%Y-%m-%d"),
         "valid_start": valid_start.strftime("%Y-%m-%d"),
         "valid_end": valid_end.strftime("%Y-%m-%d"),
@@ -644,11 +627,100 @@ def cra(
     return payload
 
 
+def _cra_for_model(
+    model_key: str, years: list[int],
+    *, init_idx: int, lead_start: int, lead_end: int,
+    threshold: float, max_shift: int,
+) -> dict:
+    """Single-year passthrough or multi-year aggregate for one model.
+
+    Per-year failures (missing init index, year out of range for the
+    forecast file) are recorded in ``warnings`` so the panel can still
+    render for the years that succeeded — same robustness pattern as
+    the displacement / progression aggregators.
+    """
+    if not years:
+        raise HTTPException(422, "no years selected")
+    per_year: list[dict] = []
+    warnings: list[str] = []
+    rep_fields: dict | None = None
+    rep_meta: dict | None = None
+    for i, yr in enumerate(years):
+        is_last = (i == len(years) - 1)
+        try:
+            p = _cra_one_year(
+                model_key, yr, init_idx,
+                lead_start=lead_start, lead_end=lead_end,
+                threshold=threshold, max_shift=max_shift,
+                include_fields=is_last,
+            )
+        except (IndexError, ValueError, KeyError, FileNotFoundError) as exc:
+            warnings.append(f"{yr}: {exc}")
+            continue
+        per_year.append(p)
+        if "fields" in p:
+            rep_fields = p["fields"]
+            rep_meta = p["meta"]
+    if not per_year:
+        raise HTTPException(
+            422,
+            "CRA could not be computed for any selected year; "
+            + ("; ".join(warnings) if warnings else "no diagnostic"),
+        )
+    if len(per_year) == 1 and len(years) == 1:
+        out = per_year[0]
+        out["n_years"] = 1
+        if warnings:
+            out["warnings"] = warnings
+        return out
+    out = AGG.aggregate_cra(per_year, representative_fields=rep_fields)
+    if rep_meta is not None:
+        out["representative_meta"] = rep_meta
+    if warnings:
+        out["warnings"] = warnings
+    out["years_requested"] = list(years)
+    out["years_computed"] = [int(p["meta"]["year"]) for p in per_year]
+    return out
+
+
+@app.get("/api/metrics/cra")
+def cra(
+    model: str,
+    year: str | None = None,
+    years: str | None = None,
+    init: int = 0,
+    lead_start: int = 1,
+    lead_end: int = 15,
+    threshold: float = 1.0,
+    max_shift: int = 8,
+):
+    """Contiguous Rain Area MSE decomposition.
+
+    Accepts a single ``year`` or a ``years`` range/CSV. Single-year mode
+    returns the full per-cell payload (obs / forecast / shifted heatmaps,
+    plus scalar decomposition). Multi-year mode returns median + IQR per
+    scalar across the year axis and keeps one representative year's
+    fields for visualization.
+    """
+    if max_shift < 0 or max_shift > 32:
+        raise HTTPException(422, "max_shift must be in 0..32")
+    if lead_end < lead_start or lead_start < 0:
+        raise HTTPException(422, "lead window invalid: require 0 <= lead_start <= lead_end")
+    yrs = _resolve_years(years, year)
+    return _cra_for_model(
+        model, yrs, init_idx=int(init),
+        lead_start=int(lead_start), lead_end=int(lead_end),
+        threshold=float(threshold), max_shift=int(max_shift),
+    )
+
+
 @app.get("/api/compare")
 def compare(
     models: str,
     year: str | None = None, years: str | None = None, init: str | None = None,
     season_end: int = 220,
+    cra_init: int = 0, cra_lead_start: int = 1, cra_lead_end: int = 15,
+    cra_threshold: float = 1.0, cra_max_shift: int = 8,
     params: OnsetParams = Depends(onset_deps), region: Region = Depends(region_deps),
 ):
     """Cross-model summary table. Per-row season scalars are median-across-years
@@ -685,6 +757,42 @@ def compare(
             p_parts.append(p); y_parts.append(y_)
         corp_out = M.compute_corp_pooled(np.concatenate(p_parts),
                                          np.concatenate(y_parts), tau=tau)
+
+        # CRA: best-effort per-model summary so the comparison table
+        # surfaces which models have displacement- vs pattern-dominant
+        # rainfall errors. Failures (missing inits, no rainfall var, etc.)
+        # collapse to a None block rather than fail the whole row.
+        try:
+            cra_out = _cra_for_model(
+                mk, yrs, init_idx=int(cra_init),
+                lead_start=int(cra_lead_start), lead_end=int(cra_lead_end),
+                threshold=float(cra_threshold), max_shift=int(cra_max_shift),
+            )
+            pct = cra_out.get("pct") or {}
+            shift = cra_out.get("corrective_shift") or {}
+            if cra_out.get("n_years", 1) > 1:
+                cra_summary = {
+                    "pct_displacement": (pct.get("displacement") or {}).get("median"),
+                    "pct_volume":       (pct.get("volume") or {}).get("median"),
+                    "pct_pattern":      (pct.get("pattern") or {}).get("median"),
+                    "shift_dx":         (shift.get("dx") or {}).get("median"),
+                    "shift_dy":         (shift.get("dy") or {}).get("median"),
+                    "n_years":          cra_out.get("n_years"),
+                }
+            else:
+                cra_summary = {
+                    "pct_displacement": pct.get("displacement"),
+                    "pct_volume":       pct.get("volume"),
+                    "pct_pattern":      pct.get("pattern"),
+                    "shift_dx":         shift.get("dx"),
+                    "shift_dy":         shift.get("dy"),
+                    "n_years":          cra_out.get("n_years", 1),
+                }
+        except HTTPException as exc:
+            cra_summary = {"error": exc.detail}
+        except Exception as exc:  # data-shape mismatches, etc.
+            cra_summary = {"error": str(exc)}
+
         model_info = model_by_key(mk)
         b0 = bundles[0][1]
         rows.append({
@@ -715,6 +823,7 @@ def compare(
                 "dsc": corp_out["dsc"],
                 "unc": corp_out["unc"],
             },
+            "cra": cra_summary,
         })
     return {"years": yrs, "n_years": len(yrs), "params": params.to_json(), "rows": rows}
 

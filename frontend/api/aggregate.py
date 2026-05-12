@@ -533,3 +533,78 @@ def expand_years(years_arg: str | None, single_year: int | None) -> list[int]:
     if single_year is not None:
         return [int(single_year)]
     raise ValueError("must supply either ?year=YYYY or ?years=YYYY[,YYYY|YYYY-YYYY]")
+
+
+def _scalar_stats(values) -> dict:
+    """Median + q25 + q75 + n for a list of (possibly None / non-finite) scalars."""
+    finite = [float(v) for v in (values or [])
+              if v is not None and np.isfinite(v)]
+    if not finite:
+        return {"median": None, "q25": None, "q75": None, "n": 0}
+    arr = np.asarray(finite, dtype=float)
+    return {
+        "median": float(np.median(arr)),
+        "q25":    float(np.quantile(arr, 0.25)),
+        "q75":    float(np.quantile(arr, 0.75)),
+        "n":      int(arr.size),
+    }
+
+
+def aggregate_cra(per_year: Sequence[dict], representative_fields: dict | None = None) -> dict:
+    """Aggregate per-year CRA results into median + IQR per scalar.
+
+    CRA's per-year output is a small bag of scalars (percentages, MSEs,
+    shifts, correlations). We report median + IQR per scalar; the
+    corrective-shift vector gets a per-axis median (median dx, median dy)
+    plus the per-axis IQR so callers can see year-to-year placement spread.
+
+    Per-year fields (obs / forecast / shifted maps) are NOT aggregated.
+    Pass ``representative_fields`` (typically the last year's payload) to
+    keep one set of maps in the response for visualization.
+    """
+    if not per_year:
+        return {"n_years": 0}
+    pct = lambda key: _scalar_stats([(p.get("pct") or {}).get(key) for p in per_year])
+    mse = lambda key: _scalar_stats([(p.get("mse") or {}).get(key) for p in per_year])
+    cor = lambda key: _scalar_stats([(p.get("spatial_corr") or {}).get(key) for p in per_year])
+    shift_axis = lambda axis: _scalar_stats(
+        [(p.get("corrective_shift") or {}).get(axis) for p in per_year]
+    )
+
+    out = {
+        "n_years": len(per_year),
+        "pct": {
+            "displacement": pct("displacement"),
+            "volume":       pct("volume"),
+            "pattern":      pct("pattern"),
+        },
+        "mse": {
+            "total":        mse("total"),
+            "shifted":      mse("shifted"),
+            "displacement": mse("displacement"),
+            "volume":       mse("volume"),
+            "pattern":      mse("pattern"),
+        },
+        "corrective_shift": {
+            "dx": shift_axis("dx"),
+            "dy": shift_axis("dy"),
+        },
+        "spatial_corr": {
+            "original": cor("original"),
+            "shifted":  cor("shifted"),
+        },
+        "mean_obs":          _scalar_stats([p.get("mean_obs") for p in per_year]),
+        "mean_fcst_shifted": _scalar_stats([p.get("mean_fcst_shifted") for p in per_year]),
+        "peak_obs":          _scalar_stats([p.get("peak_obs") for p in per_year]),
+        "peak_fcst_shifted": _scalar_stats([p.get("peak_fcst_shifted") for p in per_year]),
+        "n_obs_objects":     _scalar_stats([p.get("n_obs_objects") for p in per_year]),
+        "n_fcst_objects":    _scalar_stats([p.get("n_fcst_objects") for p in per_year]),
+        "years": [int(p.get("meta", {}).get("year")) for p in per_year
+                  if p.get("meta", {}).get("year") is not None],
+        # Carry-through identifying info from the per-year results.
+        "threshold": per_year[0].get("threshold"),
+        "max_shift": per_year[0].get("max_shift"),
+    }
+    if representative_fields is not None:
+        out["fields"] = representative_fields
+    return out

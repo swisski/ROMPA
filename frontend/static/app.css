@@ -779,13 +779,13 @@ select {
 }
 .summary-table {
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(64px, 0.6fr) repeat(5, minmax(110px, 1fr));
+  grid-template-columns: minmax(180px, 1.4fr) minmax(64px, 0.6fr) repeat(5, minmax(110px, 1fr)) minmax(140px, 1.3fr);
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text);
   align-items: stretch;
   column-gap: 6px;
-  min-width: 820px;            /* force horizontal scroll when the card is narrower */
+  min-width: 980px;            /* force horizontal scroll when the card is narrower */
 }
 .summary-table .col-head {
   font-size: 9.5px;

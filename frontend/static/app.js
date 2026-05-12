@@ -553,6 +553,7 @@ function renderSummaryTable(compare) {
     {label: "CRPS · d"},
     {label: "Brier"},
     {label: "MCB / DSC"},
+    {label: "CRA · D/V/P %", title: "rainfall MSE decomposition: displacement / volume / pattern, percent of total"},
   ];
   for (const h of heads) {
     const d = document.createElement("div");
@@ -651,6 +652,25 @@ function renderSummaryTable(compare) {
       mdCell.textContent = "—";
     }
     tbl.appendChild(mdCell);
+
+    // CRA percentages cell — concise "disp / vol / pat" integer triple.
+    const craCell = document.createElement("div");
+    craCell.className = "cell";
+    const cra = row.cra || {};
+    if (cra.error) {
+      craCell.textContent = "—";
+      craCell.title = cra.error;
+    } else if (cra.pct_displacement == null && cra.pct_volume == null && cra.pct_pattern == null) {
+      craCell.textContent = "—";
+    } else {
+      const p = (x) => (x == null || !Number.isFinite(x)) ? "—" : Math.round(x);
+      craCell.innerHTML =
+        `${p(cra.pct_displacement)} <span class="muted">/</span> `
+        + `${p(cra.pct_volume)} <span class="muted">/</span> `
+        + `${p(cra.pct_pattern)}<span class="cell-sub">% of MSE</span>`;
+      craCell.title = "displacement / volume / pattern percent of forecast MSE";
+    }
+    tbl.appendChild(craCell);
   });
 
   if (!rows.length) {
@@ -1535,37 +1555,81 @@ function markPanelsLoading(on) {
  * CRA — Contiguous Rain Area decomposition (single-year, single-init)
  * ------------------------------------------------------------------ */
 
-function renderCraBars(out) {
+// Extract a comparable scalar from either a single-year payload (where
+// pct.displacement is a number) or a multi-year aggregate (where it's
+// a stat dict {median, q25, q75, n}). Returns {value, lo, hi}.
+function scalarFromCra(node) {
+  if (node == null) return { value: null, lo: null, hi: null };
+  if (typeof node === "number") return { value: node, lo: null, hi: null };
+  if (typeof node === "object") {
+    return {
+      value: typeof node.median === "number" ? node.median : null,
+      lo:    typeof node.q25    === "number" ? node.q25    : null,
+      hi:    typeof node.q75    === "number" ? node.q75    : null,
+    };
+  }
+  return { value: null, lo: null, hi: null };
+}
+
+function renderCraBars(results) {
+  // results: [{ modelKey, modelLabel, color, out, error? }, ...]
   const div = $("plot-cra-bars");
   if (!div) return;
-  const pct = out.pct || {};
   const cells = [
     { key: "displacement", color: "#4a90e2", label: "displacement" },
     { key: "volume",       color: "#f0b264", label: "volume" },
     { key: "pattern",      color: "#bd6dd6", label: "pattern" },
   ];
-  const traces = cells.map(c => ({
-    type: "bar",
-    orientation: "h",
-    x: [pct[c.key] == null ? 0 : pct[c.key]],
-    y: ["MSE"],
-    name: c.label,
-    marker: { color: c.color },
-    hovertemplate: `${c.label}: %{x:.1f}%<extra></extra>`,
-  }));
+  // Filter to successful results. y-axis: one row per model, top-down.
+  const ok = results.filter(r => r.out && !r.error);
+  if (!ok.length) {
+    Plotly.purge(div);
+    div.innerHTML = `<div class="plot-error">CRA: no model returned a result</div>`;
+    return;
+  }
+  // Plotly stacks per (x,y) — to get one stacked bar per model we use
+  // each model as a y-category and stack the three slices along x.
+  const yCats = ok.map(r => r.modelLabel || r.modelKey);
+  const traces = cells.map(c => {
+    const xs = ok.map(r => {
+      const pct = (r.out && r.out.pct) || {};
+      const s = scalarFromCra(pct[c.key]);
+      return s.value == null ? 0 : s.value;
+    });
+    // Optional IQR text shown in hover when multi-year.
+    const hover = ok.map(r => {
+      const pct = (r.out && r.out.pct) || {};
+      const s = scalarFromCra(pct[c.key]);
+      const value = s.value == null ? null : s.value.toFixed(1);
+      const ci = (s.lo != null && s.hi != null && s.lo !== s.hi)
+        ? ` [${s.lo.toFixed(1)}–${s.hi.toFixed(1)}]` : "";
+      return `${c.label} ${value ?? "—"}%${ci}`;
+    });
+    return {
+      type: "bar",
+      orientation: "h",
+      x: xs,
+      y: yCats,
+      name: c.label,
+      marker: { color: c.color },
+      hovertemplate: "%{customdata}<extra></extra>",
+      customdata: hover,
+    };
+  });
+  const height = Math.max(140, 60 + 38 * ok.length);
   const layout = mergeLayout(PLOT_LAYOUT, {
     barmode: "stack",
     xaxis: { range: [0, 100], title: "% of forecast MSE", ticksuffix: "%" },
-    yaxis: { showticklabels: false },
-    margin: { l: 30, r: 20, t: 16, b: 36 },
-    height: 130,
-    legend: { orientation: "h", y: -0.35 },
+    yaxis: { tickfont: { size: 11 }, automargin: true },
+    margin: { l: 90, r: 20, t: 16, b: 38 },
+    height,
+    legend: { orientation: "h", y: -0.18 },
   });
   Plotly.react(div, traces, layout, PLOT_CONFIG);
   rememberPlot(div);
 }
 
-function renderCraMaps(out) {
+function renderCraMaps(out, modelLabel) {
   const div = $("plot-cra-maps");
   if (!div) return;
   const f = out.fields || {};
@@ -1579,10 +1643,11 @@ function renderCraMaps(out) {
   const finite = flat.filter(v => Number.isFinite(v));
   const vmax = finite.length ? Math.max(1, percentile(finite, 0.98)) : 1;
 
+  const tag = modelLabel ? ` (${modelLabel})` : "";
   const panels = [
-    { title: "Observed",          data: f.obs,      xa: "x",  ya: "y"  },
-    { title: "Forecast (raw)",    data: f.fcst,     xa: "x2", ya: "y2" },
-    { title: "Forecast (shifted)", data: f.shifted, xa: "x3", ya: "y3" },
+    { title: `Observed${tag}`,           data: f.obs,     xa: "x",  ya: "y"  },
+    { title: `Forecast raw${tag}`,       data: f.fcst,    xa: "x2", ya: "y2" },
+    { title: `Forecast shifted${tag}`,   data: f.shifted, xa: "x3", ya: "y3" },
   ];
   const traces = panels.map((p, idx) => ({
     type: "heatmap",
@@ -1595,9 +1660,13 @@ function renderCraMaps(out) {
     hovertemplate: `${p.title}<br>lat=%{y:.2f} lon=%{x:.2f}<br>%{z:.1f} mm<extra></extra>`,
   }));
   const cs = out.corrective_shift || { dx: 0, dy: 0 };
-  const shiftNote = (cs.dx === 0 && cs.dy === 0)
+  const sx = scalarFromCra(cs.dx);
+  const sy = scalarFromCra(cs.dy);
+  const dxTxt = sx.value == null ? "—" : Math.round(sx.value);
+  const dyTxt = sy.value == null ? "—" : Math.round(sy.value);
+  const shiftNote = (dxTxt === 0 && dyTxt === 0)
     ? "best-fit shift: 0 cells"
-    : `best-fit shift: dx=${cs.dx}, dy=${cs.dy} cells (forecast moved to match obs)`;
+    : `best-fit shift: dx=${dxTxt}, dy=${dyTxt} cells (forecast moved to match obs)`;
   const annotations = panels.map((p, idx) => ({
     text: p.title,
     xref: `${p.xa} domain`, yref: `${p.ya} domain`,
@@ -1634,58 +1703,102 @@ function percentile(arr, q) {
   return sorted[idx];
 }
 
-function craCaptionText(out) {
-  const meta = out.meta || {};
-  const pct = out.pct || {};
-  const mse = out.mse || {};
-  const fmt = v => (v == null || !Number.isFinite(v)) ? "—" : v.toFixed(1);
-  const parts = [
-    `${meta.model || ""} · ${meta.year || ""} · init ${meta.init_time || "?"}`,
-    `leads ${meta.lead_start}–${meta.lead_end} (valid ${meta.valid_start} → ${meta.valid_end})`,
-    `displacement ${fmt(pct.displacement)}% · volume ${fmt(pct.volume)}% · pattern ${fmt(pct.pattern)}%`,
-    `MSE total ${fmt(mse.total)} → shifted ${fmt(mse.shifted)}`,
-  ];
-  return parts.join(" · ");
+function craCaptionText(primaryOut, n_models, year_strs) {
+  if (!primaryOut) return `${n_models} model${n_models === 1 ? "" : "s"} selected`;
+  const pct = primaryOut.pct || {};
+  const fmt1 = v => {
+    const s = scalarFromCra(v);
+    return s.value == null ? "—" : s.value.toFixed(1);
+  };
+  const repMeta = primaryOut.representative_meta || primaryOut.meta || {};
+  const nYears = primaryOut.n_years || 1;
+  const yearsTxt = nYears > 1
+    ? `${nYears} years${year_strs ? ` (${year_strs})` : ""} · maps from ${repMeta.year ?? "?"}`
+    : `${repMeta.year ?? "?"} · init ${repMeta.init_time ?? "?"}`;
+  const lead = (primaryOut.representative_meta || primaryOut.meta || {});
+  const leadTxt = lead.lead_start != null
+    ? `leads ${lead.lead_start}–${lead.lead_end}` : "";
+  return [
+    `primary model · ${yearsTxt}`,
+    leadTxt,
+    `displacement ${fmt1(pct.displacement)}% · volume ${fmt1(pct.volume)}% · pattern ${fmt1(pct.pattern)}%`,
+  ].filter(Boolean).join(" · ");
 }
 
-function craArgs() {
-  const model = primaryModelKey();
-  // CRA needs a single year + a concrete (non-"auto") init index.
-  const year  = state.isoYear ?? selectedYears().slice(-1)[0];
+function activeCraModelEntries() {
+  // [{ key, label, color, primary }]
+  const on = state.models.filter(m => m.on);
+  return on.map((m, i) => ({
+    key: m.key, label: m.label || m.key, color: colorForModel(m.key), primary: i === 0,
+  }));
+}
+
+function craFetchArgs(modelKey) {
+  // CRA can run multi-year — pass `years=` to use the active range,
+  // mirroring the other metric endpoints. Fall back to `year=` if only
+  // a single year is selected (clearer 1-year payloads come back).
+  const years = selectedYears();
   const rawInit = state.init;
   const init = (rawInit === "auto" || rawInit == null || rawInit === "") ? 0 : Number(rawInit);
-  return {
-    model,
-    year,
+  const base = {
+    model: modelKey,
     init: Number.isFinite(init) ? init : 0,
     lead_start: state.cra.leadStart,
     lead_end:   state.cra.leadEnd,
     threshold:  state.cra.threshold,
     max_shift:  state.cra.maxShift,
   };
+  if (years.length === 1) {
+    return Object.assign(base, { year: years[0] });
+  }
+  if (years.length > 1) {
+    return Object.assign(base, { years: `${years[0]}-${years[years.length - 1]}` });
+  }
+  return base;
 }
 
 async function refreshCra() {
-  const args = craArgs();
-  if (!args.model || !args.year) {
-    const cap = $("cra-caption"); if (cap) cap.textContent = "select a model and year";
+  const entries = activeCraModelEntries();
+  const years = selectedYears();
+  if (!entries.length || !years.length) {
+    const cap = $("cra-caption"); if (cap) cap.textContent = "select at least one model and a year range";
     try { Plotly.purge($("plot-cra-bars")); Plotly.purge($("plot-cra-maps")); } catch (_) {}
     return;
   }
   setLoading($("plot-cra-bars"), true);
   setLoading($("plot-cra-maps"), true);
+
+  // Fire one fetch per active model in parallel; each panel renders
+  // independently of the others' success.
+  const fetches = entries.map(async (e) => {
+    try {
+      const out = await apiGet("/api/metrics/cra", qs(craFetchArgs(e.key)));
+      return { ...e, out, error: null };
+    } catch (err) {
+      console.error(`cra ${e.key} failed`, err);
+      return { ...e, out: null, error: err.message };
+    }
+  });
+  const results = await Promise.all(fetches);
+
   try {
-    const out = await apiGet("/api/metrics/cra", qs(args));
-    renderCraBars(out);
-    renderCraMaps(out);
-    const cap = $("cra-caption"); if (cap) cap.textContent = craCaptionText(out);
-  } catch (err) {
-    console.error("cra failed", err);
-    const cap = $("cra-caption"); if (cap) cap.textContent = `error: ${err.message}`;
-    try { Plotly.purge($("plot-cra-bars")); } catch (_) {}
-    try { Plotly.purge($("plot-cra-maps")); } catch (_) {}
-    const bars = $("plot-cra-bars");
-    if (bars) bars.innerHTML = `<div class="plot-error">CRA: ${err.message}</div>`;
+    renderCraBars(results);
+    const primary = results.find(r => r.primary && r.out) || results.find(r => r.out);
+    if (primary && primary.out) {
+      renderCraMaps(primary.out, primary.label);
+      const yrStr = years.length > 1 ? `${years[0]}–${years[years.length - 1]}` : `${years[0]}`;
+      const cap = $("cra-caption");
+      if (cap) cap.textContent = craCaptionText(primary.out, results.length, yrStr);
+    } else {
+      const cap = $("cra-caption");
+      if (cap) {
+        const errs = results.filter(r => r.error).map(r => `${r.label}: ${r.error}`);
+        cap.textContent = errs.length ? `error: ${errs[0]}` : "no result";
+      }
+      try { Plotly.purge($("plot-cra-maps")); } catch (_) {}
+      const maps = $("plot-cra-maps");
+      if (maps) maps.innerHTML = `<div class="plot-error">CRA: primary model returned no data</div>`;
+    }
   } finally {
     setLoading($("plot-cra-bars"), false);
     setLoading($("plot-cra-maps"), false);
