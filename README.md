@@ -181,23 +181,3 @@ separately at `0.6.2-shift-float-display`.
 
 MIT, per upstream.
 
----
-
-## Citation
-
-If you use this fork in research, please cite both:
-
-> Dong, B. et al. *ROMP: Rainy Season Onset Metrics Package.*
-> UChicago HCWF Authors, 2026.
-
-> Baumgartner, A. and Hernandez, G. *ROMPA: ROMP fork with
-> additional verification metrics and an interactive dashboard.*
-> UChicago DSI Capstone, 2026.
-
----
-
-## Contact
-
-- Upstream (ROMP): Bo Dong (`bodong@uchicago.edu`)
-- Fork (ROMPA): Alex Baumgartner (`alex57baumgartner@gmail.com`)
-- CRA contribution: Gio Hernandez ([giomhern](https://github.com/giomhern))
