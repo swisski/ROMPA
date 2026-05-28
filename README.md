@@ -55,7 +55,7 @@ expect rough edges).
 | Track                 | Where                                    | Polish |
 | --------------------- | ---------------------------------------- | :----: |
 | IOE + SPS             | `momp/metrics/progression.py`            | ★★★    |
-| Isochrone geometry    | `momp/graphics/isochrone.py`             | ★★★    |
+| Isochrone geometry    | `momp/graphics/isochrone.py`             | ★★    |
 | CRA decomposition     | `momp/metrics/cra.py`                    | ★★★    |
 | CRPS (mixed dist'n)   | `momp/metrics/crps.py`                   | ★★     |
 | FSS                   | `momp/metrics/neighborhood.py`           | ★★     |
