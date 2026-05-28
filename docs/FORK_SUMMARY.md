@@ -81,7 +81,7 @@ via shapely.
 **`momp/app/progression_verification.py`** + **`momp/driver_progression.py`** —
 orchestration and the `momp-run-progression` CLI entry point.
 
-### Classmate's contribution: CRA
+### CRA
 
 **`momp/metrics/cra.py`** — Contiguous Rain Area, Ebert & McBride
 2000. Object-based decomposition of raw-rainfall forecast MSE into
