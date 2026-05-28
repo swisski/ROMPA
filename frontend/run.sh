@@ -18,9 +18,22 @@ REPO_ROOT="$(pwd)"
 HOST="${ROMP_FRONTEND_HOST:-127.0.0.1}"
 PORT="${ROMP_FRONTEND_PORT:-8000}"
 
-# auto-pick richer data root if present (from ./frontend/link_aice_data.sh)
-if [ -z "${ROMP_DATA_ROOT:-}" ] && [ -d "$REPO_ROOT/.data_aice/obs" ]; then
-    export ROMP_DATA_ROOT="$REPO_ROOT/.data_aice"
+# auto-pick a richer data root if present. Ethiopia tree (CHIRPS+AIFS)
+# takes precedence when both .data_ethiopia/ and .data_aice/ exist —
+# remove or rename it to fall back to the India tree.
+if [ -z "${ROMP_DATA_ROOT:-}" ]; then
+    if [ -d "$REPO_ROOT/.data_ethiopia/obs" ]; then
+        export ROMP_DATA_ROOT="$REPO_ROOT/.data_ethiopia"
+        : "${ROMP_LAND_MASK:=Ethiopia}"
+        export ROMP_LAND_MASK
+        # Ethiopia: post-Sep rainfall is Deyr (a different rain system),
+        # NOT a late Kiremt. Truncate obs onset search at Sep 30 so Deyr
+        # cells stay NaN on the obs side and don't inflate the IOE floor.
+        : "${ROMP_OBS_END_EXTEND_DAYS:=0}"
+        export ROMP_OBS_END_EXTEND_DAYS
+    elif [ -d "$REPO_ROOT/.data_aice/obs" ]; then
+        export ROMP_DATA_ROOT="$REPO_ROOT/.data_aice"
+    fi
 fi
 
 # --- pick an interpreter that has uvicorn + momp available ---

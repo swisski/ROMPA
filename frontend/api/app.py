@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ROMP metrics API", version="0.4.2-cra-objective", lifespan=lifespan)
+app = FastAPI(title="ROMP metrics API", version="0.6.2-shift-float-display", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
@@ -318,9 +318,13 @@ def state(
                    "lon_min": region.lon_min, "lon_max": region.lon_max},
         "is_ensemble": bundle["ens"] is not None,
         "n_members": int(bundle["ens"].sizes["member"]) if bundle["ens"] is not None else 1,
-        "obs_onset": M.field_payload(bundle["obs"]),
-        "fcst_onset": M.field_payload(bundle["fcst_det"]),
-        "ens_mean_onset": (M.field_payload(bundle["ens"].mean("member", skipna=True))
+        # Onset DOY fields: bilinearly upsampled for display so the
+        # isochrone overlay's bin heatmap and forecast contours render
+        # smoothly on coarse AICE grids. Same Stage-1 smoothing the CRA
+        # panel uses — scoring metrics still run on native cells.
+        "obs_onset": M.upsampled_field_payload(bundle["obs"]),
+        "fcst_onset": M.upsampled_field_payload(bundle["fcst_det"]),
+        "ens_mean_onset": (M.upsampled_field_payload(bundle["ens"].mean("member", skipna=True))
                            if bundle["ens"] is not None else None),
         "obs_range": obs_rng,
         "fcst_range": fcst_rng,
@@ -372,10 +376,31 @@ def _global_thresholds(bundles, n=4) -> list[int]:
 
 
 def _global_progression_window(bundles) -> tuple[int, int]:
+    """d-axis range for IOE/SPS, clipped to the intersection of obs and fcst
+    onset DOY ranges.
+
+    Why intersection on the *upper* bound: the IOE / SPS curves treat any
+    cell whose onset DOY is NaN as "no onset, ever" (``_binary_by_day`` in
+    ``momp/metrics/progression.py`` maps NaN -> 0 for every d). The obs
+    detector searches May 1 - Sep 30 + 47d (~DOY 320), but the forecast
+    detector is bounded by the forecast file's lead window (~DOY 168 from
+    a May 1 init for a 47-day AIFS/GenCast). So at d > fcst_max_doy, every
+    cell where obs detected onset but fcst's window ran out shows up in
+    the symmetric difference - permanently - and the curve plateaus at
+    that asymmetric-NaN fraction instead of decaying to zero. Clipping
+    the upper d to ``min(obs_max, fcst_max)`` evaluates only within the
+    DOY range both detectors could resolve, matching the fixed-horizon
+    convention in Goessling & Jung 2018 (the SPS reference).
+
+    Lower bound stays as the union (``min(obs_min, fcst_min)``) so the
+    curve has a few days of flat-zero startup before either field fires
+    its first onset - visually clear that the chart starts before any
+    front has arrived.
+    """
     obs = _global_range(bundles, "obs")
     fcst = _global_range(bundles, "fcst_det")
     lo = min(obs[0], fcst[0]) - 2
-    hi = max(obs[1], fcst[1]) + 2
+    hi = min(obs[1], fcst[1]) + 2
     return int(lo), int(hi)
 
 
@@ -598,20 +623,26 @@ def corp(
 def _cra_one_year(
     model_key: str, year: int, init_idx: int,
     *, lead_start: int, lead_end: int, threshold: float, max_shift: int,
-    include_fields: bool,
+    subgrid_factor: int, include_fields: bool,
 ) -> dict:
     """Run CRA for one (model, year, init) and return the JSON-ready payload."""
+    import os
     from . import rainfall as R
     fa = R.get_forecast_accum(model_key, int(year), int(init_idx),
                               int(lead_start), int(lead_end))
     valid_start, valid_end = R.valid_window(fa.init_time, lead_start, lead_end)
     oa = R.get_obs_accum(int(year), valid_start, valid_end)
     case = f"{model_key}_{int(year)}_init{fa.init_time:%Y%m%d}_lead{lead_start}-{lead_end}"
+    # CRA verification + outline follow the same country as the onset land
+    # mask. Without this the CRA panel was India-only regardless of region.
+    display_country = os.environ.get("ROMP_LAND_MASK", "").strip() or None
     payload = M.compute_cra(
         fa.rainfall, fa.lat, fa.lon,
         oa.rainfall, oa.lat, oa.lon,
         case=case, threshold=float(threshold), max_shift=int(max_shift),
+        subgrid_factor=int(subgrid_factor),
         include_fields=include_fields,
+        display_country=display_country,
     )
     payload["meta"] = {
         "model": model_key,
@@ -630,7 +661,7 @@ def _cra_one_year(
 def _cra_for_model(
     model_key: str, years: list[int],
     *, init_idx: int, lead_start: int, lead_end: int,
-    threshold: float, max_shift: int,
+    threshold: float, max_shift: int, subgrid_factor: int = 2,
 ) -> dict:
     """Single-year passthrough or multi-year aggregate for one model.
 
@@ -644,6 +675,8 @@ def _cra_for_model(
     per_year: list[dict] = []
     warnings: list[str] = []
     rep_fields: dict | None = None
+    rep_fields_full: dict | None = None
+    rep_country_outline: dict | None = None
     rep_meta: dict | None = None
     for i, yr in enumerate(years):
         is_last = (i == len(years) - 1)
@@ -652,6 +685,7 @@ def _cra_for_model(
                 model_key, yr, init_idx,
                 lead_start=lead_start, lead_end=lead_end,
                 threshold=threshold, max_shift=max_shift,
+                subgrid_factor=subgrid_factor,
                 include_fields=is_last,
             )
         except (IndexError, ValueError, KeyError, FileNotFoundError) as exc:
@@ -660,6 +694,8 @@ def _cra_for_model(
         per_year.append(p)
         if "fields" in p:
             rep_fields = p["fields"]
+            rep_fields_full = p.get("fields_full")
+            rep_country_outline = p.get("country_outline")
             rep_meta = p["meta"]
     if not per_year:
         raise HTTPException(
@@ -673,7 +709,12 @@ def _cra_for_model(
         if warnings:
             out["warnings"] = warnings
         return out
-    out = AGG.aggregate_cra(per_year, representative_fields=rep_fields)
+    out = AGG.aggregate_cra(
+        per_year,
+        representative_fields=rep_fields,
+        representative_fields_full=rep_fields_full,
+        representative_country_outline=rep_country_outline,
+    )
     if rep_meta is not None:
         out["representative_meta"] = rep_meta
     if warnings:
@@ -692,7 +733,8 @@ def cra(
     lead_start: int = 1,
     lead_end: int = 15,
     threshold: float = 1.0,
-    max_shift: int = 8,
+    max_shift: int = 4,
+    subgrid_factor: int = 2,
 ):
     """Contiguous Rain Area MSE decomposition.
 
@@ -704,6 +746,8 @@ def cra(
     """
     if max_shift < 0 or max_shift > 32:
         raise HTTPException(422, "max_shift must be in 0..32")
+    if subgrid_factor < 1 or subgrid_factor > 32:
+        raise HTTPException(422, "subgrid_factor must be in 1..32")
     if lead_end < lead_start or lead_start < 0:
         raise HTTPException(422, "lead window invalid: require 0 <= lead_start <= lead_end")
     yrs = _resolve_years(years, year)
@@ -711,6 +755,7 @@ def cra(
         model, yrs, init_idx=int(init),
         lead_start=int(lead_start), lead_end=int(lead_end),
         threshold=float(threshold), max_shift=int(max_shift),
+        subgrid_factor=int(subgrid_factor),
     )
 
 
@@ -720,7 +765,7 @@ def compare(
     year: str | None = None, years: str | None = None, init: str | None = None,
     season_end: int = 220,
     cra_init: int = 0, cra_lead_start: int = 1, cra_lead_end: int = 15,
-    cra_threshold: float = 1.0, cra_max_shift: int = 8,
+    cra_threshold: float = 1.0, cra_max_shift: int = 4,
     params: OnsetParams = Depends(onset_deps), region: Region = Depends(region_deps),
 ):
     """Cross-model summary table. Per-row season scalars are median-across-years

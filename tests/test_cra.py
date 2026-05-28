@@ -71,6 +71,57 @@ def test_cra_pure_volume_bias():
     assert result.mse_pattern == pytest.approx(0.0, abs=1e-9)
 
 
+def test_cra_pure_volume_bias_with_verification_mask():
+    """Regression test for the variable-score-mask bug: pure-volume bias
+    inside a verification mask was previously producing a phantom shift
+    because the per-candidate ``cra_mask = obs|fcst|shifted`` changed
+    the masked-mean denominator per candidate, letting the optimizer
+    lower MSE by enlarging the union with zero-residual cells. With the
+    score mask now held constant across all candidates AND tie-breaking
+    by minimum-magnitude shift, the optimizer should return (0, 0)."""
+    obs = _ellipse_field((40, 40), cy=20, cx=20, ry=8, rx=8, val=10.0)
+    fcst = obs * 2.0
+    # A verification mask that's smaller than the full grid — exactly
+    # the configuration that exposed the bug (rectangle covering the
+    # ellipse + some margin).
+    verification = np.zeros((40, 40), dtype=bool)
+    verification[8:32, 8:32] = True
+    result, _, _ = cra_decomposition(
+        case="pure_volume_masked", obs=obs, fcst=fcst,
+        threshold=1.0, max_shift=8,
+        verification_mask=verification,
+    )
+    assert result.corrective_shift_dx == 0
+    assert result.corrective_shift_dy == 0
+    assert result.pct_volume > 0
+    # Decomposition identity holds exactly (within float tolerance) now
+    # that mse_total and mse_shifted share one mask.
+    assert result.mse_displacement + result.mse_volume + result.mse_pattern == \
+        pytest.approx(result.mse_total, rel=1e-9, abs=1e-9)
+
+
+def test_cra_subgrid_factor_recovers_fractional_shift():
+    """With ``subgrid_factor > 1``, the optimizer can find sub-cell
+    translations via bilinear resampling. Build a fcst that's the obs
+    bilinearly translated by 0.5 cells east, then check the optimizer
+    recovers a shift in ``(-0.5..-0.5)`` (or close to it within the
+    finite search resolution)."""
+    from scipy import ndimage
+    obs = _ellipse_field((40, 40), cy=20, cx=20, ry=8, rx=8, val=10.0)
+    # Bilinear shift by (0, +0.5)
+    fcst = ndimage.shift(obs, (0, 0.5), order=1, mode="constant", cval=0.0)
+    result, _, _ = cra_decomposition(
+        case="half_cell_east", obs=obs, fcst=fcst,
+        threshold=1.0, max_shift=2,
+        subgrid_factor=4,
+    )
+    # Optimizer should pick dx ≈ -0.5 (move fcst back west by half a cell).
+    # subgrid_factor=4 → step 0.25, so the recoverable values are -0.25
+    # or -0.5. Either is correct within the search resolution.
+    assert -0.75 <= result.corrective_shift_dx <= -0.25
+    assert abs(result.corrective_shift_dy) <= 0.25
+
+
 def test_cra_pure_pattern_error():
     # Same location, same total volume, but redistributed mass — pure
     # pattern error. Use a 50×50 grid and an obs ellipse vs a fcst
@@ -178,11 +229,22 @@ def test_compute_cra_with_india_mask_uses_verification_mask():
 
 
 def _synthetic_per_year(year, pct_d, pct_v, pct_p, dx, dy):
+    # Derive per-year MSE values from the percentages so the synthetic
+    # fixture is internally consistent (mse_disp + mse_vol + mse_pat
+    # ≈ mse_total). The aggregator computes pooled percentages from
+    # per-year MSEs, so the fixture needs the two to agree.
+    mse_total = 100.0
+    def _to_mse(p):
+        return (p / 100.0) * mse_total if p is not None else None
+    mse_d = _to_mse(pct_d)
+    mse_v = _to_mse(pct_v)
+    mse_p = _to_mse(pct_p)
     return {
         "meta": {"year": year},
         "pct": {"displacement": pct_d, "volume": pct_v, "pattern": pct_p},
-        "mse": {"total": 100.0, "shifted": 50.0,
-                "displacement": 50.0, "volume": 20.0, "pattern": 30.0},
+        "mse": {"total": mse_total,
+                "shifted": mse_total - (mse_d if mse_d is not None else 0),
+                "displacement": mse_d, "volume": mse_v, "pattern": mse_p},
         "corrective_shift": {"dx": dx, "dy": dy},
         "spatial_corr": {"original": 0.5, "shifted": 0.7},
         "mean_obs": 5.0, "mean_fcst_shifted": 5.5,

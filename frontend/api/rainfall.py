@@ -47,9 +47,17 @@ _obs_accum_cache: dict[tuple, ObservedAccum] = {}
 
 
 def _normalize_obs_time(da: xr.DataArray) -> xr.DataArray:
-    if "TIME" in da.dims:
-        return da.rename({"TIME": "time"})
-    return da
+    # IMD 2° obs spells coords as latitude/longitude (1901-2022) or lat/lon
+    # (2023+), with TIME for the time dim throughout. CHIRPS-IMERG over
+    # Ethiopia uses uppercase LATITUDE/LONGITUDE/TIME. Normalize all of
+    # them to lowercase short names.
+    renames = {}
+    if "TIME" in da.dims: renames["TIME"] = "time"
+    if "latitude" in da.dims: renames["latitude"] = "lat"
+    if "longitude" in da.dims: renames["longitude"] = "lon"
+    if "LATITUDE" in da.dims: renames["LATITUDE"] = "lat"
+    if "LONGITUDE" in da.dims: renames["LONGITUDE"] = "lon"
+    return da.rename(renames) if renames else da
 
 
 def _load_forecast_accum(model: ModelInfo, year: int, init_idx: int,

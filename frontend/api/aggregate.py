@@ -550,7 +550,9 @@ def _scalar_stats(values) -> dict:
     }
 
 
-def aggregate_cra(per_year: Sequence[dict], representative_fields: dict | None = None) -> dict:
+def aggregate_cra(per_year: Sequence[dict], representative_fields: dict | None = None,
+                  representative_fields_full: dict | None = None,
+                  representative_country_outline: dict | None = None) -> dict:
     """Aggregate per-year CRA results into median + IQR per scalar.
 
     CRA's per-year output is a small bag of scalars (percentages, MSEs,
@@ -564,12 +566,49 @@ def aggregate_cra(per_year: Sequence[dict], representative_fields: dict | None =
     """
     if not per_year:
         return {"n_years": 0}
-    pct = lambda key: _scalar_stats([(p.get("pct") or {}).get(key) for p in per_year])
     mse = lambda key: _scalar_stats([(p.get("mse") or {}).get(key) for p in per_year])
     cor = lambda key: _scalar_stats([(p.get("spatial_corr") or {}).get(key) for p in per_year])
     shift_axis = lambda axis: _scalar_stats(
         [(p.get("corrective_shift") or {}).get(axis) for p in per_year]
     )
+
+    # Pct slice — report POOLED percentages (sum of per-year slice MSEs
+    # over sum of per-year total MSEs), which is guaranteed to sum to
+    # 100% across the three slices because each year already decomposes
+    # mse_total = mse_displacement + mse_volume + mse_pattern. Median of
+    # per-year percentages would NOT sum to 100% (medians don't add),
+    # which is why an earlier version of this aggregator gave AIFS
+    # ~91% as a sanity-failing headline.
+    def _pooled_pct(slice_key: str) -> dict:
+        slice_vals = []
+        total_vals = []
+        per_year_pct = []
+        for p in per_year:
+            tot = (p.get("mse") or {}).get("total")
+            piece = (p.get("mse") or {}).get(slice_key)
+            year_pct = (p.get("pct") or {}).get(slice_key)
+            if tot is not None and np.isfinite(tot) and tot > 0 \
+               and piece is not None and np.isfinite(piece):
+                slice_vals.append(float(piece))
+                total_vals.append(float(tot))
+            if year_pct is not None and np.isfinite(year_pct):
+                per_year_pct.append(float(year_pct))
+        if not slice_vals:
+            return {"median": None, "q25": None, "q75": None, "n": 0}
+        pooled = 100.0 * sum(slice_vals) / sum(total_vals)
+        # q25/q75 = per-year spread of the percentage, so users can
+        # still see year-to-year variation. "median" key holds the
+        # POOLED value (renamed in spirit, kept in name so frontend
+        # callers — which all read .median — get the corrected number
+        # without a contract change).
+        arr = np.asarray(per_year_pct, dtype=float)
+        return {
+            "median": float(pooled),
+            "q25":    float(np.quantile(arr, 0.25)) if arr.size else None,
+            "q75":    float(np.quantile(arr, 0.75)) if arr.size else None,
+            "n":      int(len(per_year_pct)),
+        }
+    pct = _pooled_pct
 
     out = {
         "n_years": len(per_year),
@@ -607,4 +646,8 @@ def aggregate_cra(per_year: Sequence[dict], representative_fields: dict | None =
     }
     if representative_fields is not None:
         out["fields"] = representative_fields
+    if representative_fields_full is not None:
+        out["fields_full"] = representative_fields_full
+    if representative_country_outline is not None:
+        out["country_outline"] = representative_country_outline
     return out

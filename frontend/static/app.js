@@ -144,7 +144,7 @@ const state = {
   busy: false,
   progressionShowDecomp: false,
   plotDivs: new Set(),
-  cra: { leadStart: 1, leadEnd: 15, threshold: 1.0, maxShift: 8 },
+  cra: { leadStart: 1, leadEnd: 15, threshold: 1.0, maxShift: 4 },
 };
 
 function selectedYears() {
@@ -1029,53 +1029,31 @@ function renderProgression(compare) {
     }
   }
 
-  // Peak-DOY annotation: faint vertical dashed line at the primary
-  // model's IOE peak, with a CI band shaded behind it when multi-year.
-  // We only draw this for the primary model — multi-model peak lines
-  // would clutter the chart and the cross-model peak comparison
-  // already lives in the bench summary table above.
+  // Peak-DOY overlay removed — the line sat at median(per_year_peak_DOY),
+  // while the plotted curve is median(per_year_IOE) per day. Those are
+  // different operations ("extremum of a median" ≠ "median of extrema"),
+  // so the line was visibly offset from the curve's apparent peak. The
+  // per-model peak DOY + CI is still in the cross-model summary table.
   const shapes = [];
   const annotations = [];
-  if (rows.length) {
-    const primary = rows[0];
-    const peak = (primary.progression && primary.progression.peak) || {};
-    if (peak.ioe_doy !== null && peak.ioe_doy !== undefined) {
-      const color = colorForModel(primary.model);
-      const lo = peak.ioe_doy_ci_lo, hi = peak.ioe_doy_ci_hi;
-      if (multiYear && lo !== null && lo !== undefined &&
-          hi !== null && hi !== undefined && lo !== hi) {
-        shapes.push({
-          type: "rect", xref: "x", yref: "paper",
-          x0: lo, x1: hi, y0: 0, y1: 1,
-          fillcolor: rgba(color, 0.08), line: { width: 0 }, layer: "below",
-        });
-      }
-      shapes.push({
-        type: "line", xref: "x", yref: "paper",
-        x0: peak.ioe_doy, x1: peak.ioe_doy, y0: 0, y1: 1,
-        line: { color: rgba(color, 0.55), width: 1.2, dash: "dash" },
-      });
-      const ciTxt = (multiYear && lo !== null && lo !== undefined &&
-                     hi !== null && hi !== undefined && lo !== hi)
-        ? ` [${Math.round(lo)}–${Math.round(hi)}]` : "";
-      annotations.push({
-        x: peak.ioe_doy, y: 1, xref: "x", yref: "paper",
-        text: `peak DOY ${Math.round(peak.ioe_doy)}${ciTxt}`,
-        showarrow: false, xanchor: "left", yanchor: "top",
-        font: { size: 10, color: rgba(color, 0.85) },
-        bgcolor: "rgba(0,0,0,0)", xshift: 4,
-      });
-    }
-  }
 
   const layout = mergeLayout(PLOT_LAYOUT, {
-    xaxis: { title: { text: "Day of year", font: { size: 11, color: "#a8a291" } } },
+    xaxis: {
+      title: { text: "Day of year", font: { size: 11, color: "#a8a291" }, standoff: 12 },
+    },
     yaxis: { title: { text: "10⁶ km²", font: { size: 11, color: "#a8a291" } } },
-    // Larger bottom margin + lower legend Y so the legend (can be 4-8
-    // traces for multi-model + IQR bands) never overlaps the x-axis
-    // ticks or the card's interpretation footer below.
-    margin: { l: 56, r: 22, t: 22, b: 110 },
-    legend: { orientation: "h", y: -0.35, yanchor: "top" },
+    // Bigger bottom margin + legend pushed further below so it never
+    // collides with the x-axis title or the card's interpretation
+    // footer beneath. Plotly puts each row of legend chips below the
+    // last; with 4-8 traces (multi-model + IQR bands + decomp toggles)
+    // the legend stretches to ~3 rows, hence the generous spacing.
+    margin: { l: 56, r: 22, t: 22, b: 160 },
+    legend: {
+      orientation: "h", y: -0.42, yanchor: "top",
+      x: 0.5, xanchor: "center",
+      tracegroupgap: 4, font: { size: 10 },
+    },
+    height: 460,
     shapes, annotations,
   });
 
@@ -1248,6 +1226,7 @@ function renderCrps(crps) {
     y: f.lat,
     z: f.values,
     colorscale: "Magma",
+    zsmooth: "best",
     colorbar: {
       title: { text: "CRPS (days)", font: { size: 10, color: "#a8a291" } },
       thickness: 10,
@@ -1521,7 +1500,8 @@ async function loadCatalog() {
   const obsYears = cat.obs?.years || [];
   const yrLo = obsYears.length ? Math.min(...obsYears) : "—";
   const yrHi = obsYears.length ? Math.max(...obsYears) : "—";
-  $("meta-obs").textContent = `IMD ${yrLo}–${yrHi} · ${obsYears.length} years`;
+  const obsLabel = cat.obs?.label || "obs";
+  $("meta-obs").textContent = `${obsLabel} ${yrLo}–${yrHi} · ${obsYears.length} years`;
   const maskLabel = cat.land_mask || "off";
   $("meta-mask").textContent = maskLabel;
 
@@ -1547,6 +1527,7 @@ function markPanelsLoading(on) {
     "plot-fss",
     "plot-cra-bars",
     "plot-cra-maps",
+    "plot-cra-shift",
   ].forEach(id => setLoading($(id), on));
   setLoading($("summary-table"), on);
 }
@@ -1578,7 +1559,10 @@ const CRA_SLICE_COLORS = {
 };
 
 function renderCraBars(results) {
-  // results: [{ modelKey, modelLabel, color, out, error? }, ...]
+  // results: [{ key, label, color, primary, out, error? }, ...]
+  // refreshCra spreads activeCraModelEntries() objects which use the
+  // shorter `key`/`label` field names — not `modelKey`/`modelLabel`,
+  // which an earlier draft of this function expected.
   const div = $("plot-cra-bars");
   if (!div) return;
   const cells = [
@@ -1600,7 +1584,7 @@ function renderCraBars(results) {
 
   // y-categories: one row per model. Reverse so the *primary* (first
   // active chip) sits at the top — matches the maps panel below.
-  const labels = ok.map(r => r.modelLabel || r.modelKey).reverse();
+  const labels = ok.map(r => r.label || r.key).reverse();
   const orderedOk = ok.slice().reverse();
 
   const traces = cells.map(c => {
@@ -1614,7 +1598,7 @@ function renderCraBars(results) {
       const value = s.value == null ? "—" : s.value.toFixed(1);
       const ci = (s.lo != null && s.hi != null && s.lo !== s.hi)
         ? ` [${s.lo.toFixed(1)}–${s.hi.toFixed(1)}]` : "";
-      return `${r.modelLabel || r.modelKey} · ${c.label} ${value}%${ci}`;
+      return `${r.label || r.key} · ${c.label} ${value}%${ci}`;
     });
     const text = xs.map(v => v >= 5 ? `${v.toFixed(0)}%` : "");
     return {
@@ -1642,7 +1626,7 @@ function renderCraBars(results) {
     bargap: 0.35,
     xaxis: {
       range: [0, 100], ticksuffix: "%",
-      title: "% of forecast MSE",
+      title: { text: "% of forecast MSE", standoff: 8 },
       fixedrange: true,
     },
     yaxis: {
@@ -1650,11 +1634,13 @@ function renderCraBars(results) {
       automargin: true,
       fixedrange: true,
     },
-    margin: { l: 140, r: 28, t: 18, b: 44 },
-    height,
+    // Extra bottom margin so the x-axis title and the legend underneath
+    // don't end up on the same line.
+    margin: { l: 140, r: 28, t: 18, b: 80 },
+    height: height + 36,
     legend: {
       orientation: "h",
-      y: -0.32,
+      y: -0.55,
       x: 0.5,
       xanchor: "center",
       bgcolor: "rgba(0,0,0,0)",
@@ -1717,8 +1703,11 @@ function renderCraMaps(out, modelLabel) {
   ];
 
   // Heatmap traces. ``connectgaps: false`` keeps NaN cells transparent
-  // (the demo's india-only render). ``zsmooth: false`` keeps cell edges
-  // crisp so the integer grid stays legible against the shift overlay.
+  // (the demo's india-only render). ``zsmooth: false`` keeps cell
+  // boundaries crisp — the 16×17 native grid renders as solid blocks
+  // so the displayed granularity matches the actual data resolution
+  // (no renderer-side bilinear blur faking detail). The India outline
+  // overlay below gives geographic context against the chunky cells.
   const traces = panels.map((p, idx) => ({
     type: "heatmap",
     z: p.data.values, x: p.data.lon, y: p.data.lat,
@@ -1735,6 +1724,26 @@ function renderCraMaps(out, modelLabel) {
     hovertemplate: `${p.title}<br>lat=%{y:.2f} lon=%{x:.2f}<br>%{z:.1f} mm<extra></extra>`,
   }));
 
+  // India outline on each panel — anchors each map to a recognizable
+  // border so the viewer can tell which cells are inside the country
+  // vs neighboring water/land. Drawn from the bundled shapefile
+  // polygon (cleaner than the bilinear-mask-isocontour we used to
+  // draw at lower resolution).
+  if (out.country_outline
+      && Array.isArray(out.country_outline.lat)
+      && Array.isArray(out.country_outline.lon)) {
+    panels.forEach(p => {
+      traces.push({
+        type: "scatter", mode: "lines",
+        x: out.country_outline.lon,
+        y: out.country_outline.lat,
+        line: { color: "rgba(247,243,227,0.55)", width: 1.4 },
+        showlegend: false, hoverinfo: "skip",
+        xaxis: p.xa, yaxis: p.ya,
+      });
+    });
+  }
+
   // Shift overlay. Centroids are rainfall-weighted (inside the country
   // mask). The "actual movement" is fcst → shifted — i.e. fcst_centroid
   // + (dy·dlat, dx·dlon). We draw an arrow on BOTH the forecast and
@@ -1744,11 +1753,16 @@ function renderCraMaps(out, modelLabel) {
   const cs = out.corrective_shift || { dx: 0, dy: 0 };
   const dxVal = scalarFromCra(cs.dx).value;
   const dyVal = scalarFromCra(cs.dy).value;
-  const dxCells = dxVal == null ? 0 : Math.round(dxVal);
-  const dyCells = dyVal == null ? 0 : Math.round(dyVal);
+  // Keep full float precision — with ``subgrid_factor > 1`` the shift
+  // can be fractional cells (e.g. 0.25). Rounding to int would print
+  // "0 cells" for any sub-cell shift, which looks like "no shift".
+  const dxCells = dxVal == null ? 0 : dxVal;
+  const dyCells = dyVal == null ? 0 : dyVal;
   const spacing = out.grid_spacing || {};
   const dlat = Number.isFinite(spacing.dlat) ? spacing.dlat : null;
   const dlon = Number.isFinite(spacing.dlon) ? spacing.dlon : null;
+  // ε = 1/100 of a cell → anything smaller treats as "no shift".
+  const SHIFT_EPS = 0.01;
 
   // Centroid markers — solid filled circles + a white ring so they read
   // against the heatmap. Two markers per relevant panel: obs (reference)
@@ -1782,7 +1796,7 @@ function renderCraMaps(out, modelLabel) {
   const annotations = [];
   const fc = cent.fcst || cent.fcst_full;
   if (fc && Number.isFinite(fc.lat) && dlat != null && dlon != null
-      && (dxCells !== 0 || dyCells !== 0)) {
+      && (Math.abs(dxCells) > SHIFT_EPS || Math.abs(dyCells) > SHIFT_EPS)) {
     const x_to = fc.lon + dxCells * dlon;
     const y_to = fc.lat + dyCells * dlat;
     // Draw on forecast-raw panel: arrow goes from fcst centroid toward
@@ -1798,8 +1812,8 @@ function renderCraMaps(out, modelLabel) {
       standoff: 8,
     });
     annotations.push({
-      text: `+${dxCells} <span style="font-size:9px">cells E/W</span>, ` +
-            `+${dyCells} <span style="font-size:9px">cells N/S</span>`,
+      text: `${dxCells >= 0 ? "+" : ""}${dxCells.toFixed(2)} <span style="font-size:9px">cells E/W</span>, ` +
+            `${dyCells >= 0 ? "+" : ""}${dyCells.toFixed(2)} <span style="font-size:9px">cells N/S</span>`,
       xref: "x2", yref: "y2",
       x: (fc.lon + x_to) / 2, y: (fc.lat + y_to) / 2,
       xanchor: "left", yanchor: "bottom", xshift: 6,
@@ -1840,15 +1854,20 @@ function renderCraMaps(out, modelLabel) {
   });
 
   // Bottom-edge caption: corrective shift in cells and degrees.
-  const degTxt = (dlat != null && dlon != null && (dxCells !== 0 || dyCells !== 0))
-    ? ` (≈ ${Math.abs(dxCells * dlon).toFixed(1)}° ${dxCells > 0 ? "E" : dxCells < 0 ? "W" : ""}, `
-      + `${Math.abs(dyCells * dlat).toFixed(1)}° ${dyCells > 0 ? "N" : dyCells < 0 ? "S" : ""})`
+  // Float-aware: ε threshold for "no shift", 2-decimal cell precision,
+  // 2-decimal degree precision so sub-cell shifts (e.g. 0.25 cells =
+  // 0.5° at 2° native) render as a real value instead of being
+  // rounded to "0 cells".
+  const isShifted = Math.abs(dxCells) > SHIFT_EPS || Math.abs(dyCells) > SHIFT_EPS;
+  const degTxt = (dlat != null && dlon != null && isShifted)
+    ? ` (≈ ${Math.abs(dxCells * dlon).toFixed(2)}° ${dxCells > 0 ? "E" : "W"}, `
+      + `${Math.abs(dyCells * dlat).toFixed(2)}° ${dyCells > 0 ? "N" : "S"})`
     : "";
-  const shiftNote = (dxCells === 0 && dyCells === 0)
+  const shiftNote = !isShifted
     ? "best-fit corrective shift: 0 cells (forecast already aligned)"
     : `best-fit corrective shift: `
-      + `${Math.abs(dxCells)} cell${Math.abs(dxCells) === 1 ? "" : "s"} ${dxCells > 0 ? "east" : dxCells < 0 ? "west" : ""}, `
-      + `${Math.abs(dyCells)} cell${Math.abs(dyCells) === 1 ? "" : "s"} ${dyCells > 0 ? "north" : dyCells < 0 ? "south" : ""}`
+      + `${Math.abs(dxCells).toFixed(2)} cells ${dxCells > 0 ? "east" : "west"}, `
+      + `${Math.abs(dyCells).toFixed(2)} cells ${dyCells > 0 ? "north" : "south"}`
       + `${degTxt}`;
   annotations.push({
     text: shiftNote,
@@ -1875,8 +1894,256 @@ function renderCraMaps(out, modelLabel) {
     yaxis2: { title: "",    matches: "y", showticklabels: false },
     xaxis3: { title: "lon", domain: [0.68, 0.99], constrain: "domain" },
     yaxis3: { title: "",    matches: "y", showticklabels: false },
-    height: 420,
+    height: 480,
     margin: { l: 56, r: 96, t: 56, b: 60 },
+    annotations,
+    showlegend: false,
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(8,14,22,0.92)",
+  });
+  Plotly.react(div, traces.concat(centroidTraces), layout, PLOT_CONFIG);
+  rememberPlot(div);
+}
+
+/* ------------------------------------------------------------------ *
+ * CRA shift diagnostic — full unmasked forecast + India outline + vector
+ * ------------------------------------------------------------------ *
+ * Two side-by-side panels. Both show the FULL (unmasked) forecast
+ * rainfall — including cells over the Bay of Bengal / Arabian Sea —
+ * because what matters for the shift is the whole pattern, not just
+ * the part that happens to sit over India before the shift. Cells
+ * that were over water before the shift become India cells after the
+ * shift, and vice versa; cropping early would hide exactly the
+ * thing we're trying to show.
+ *
+ *   Before — unmasked forecast heatmap, faint India outline overlaid
+ *            for geographic reference, big amber arrow drawn from
+ *            the forecast centroid in the direction the optimizer
+ *            chose to translate the field.
+ *   After  — unmasked shifted forecast heatmap, same India outline,
+ *            same color scale so cell-to-cell comparison is honest.
+ *
+ * The arrow IS the visualization — its length (in cells × grid
+ * spacing) is the corrective shift the CRA optimizer applied. The
+ * second panel literally shows the result of translating the first
+ * panel's field by that vector.
+ */
+function renderCraShiftDiagnostic(out) {
+  const div = $("plot-cra-shift");
+  if (!div) return;
+  // Asymmetric layout:
+  //   Left  — the WHOLE forecast over the full bbox (water + land,
+  //           NOT cropped to India). India outline drawn on top as a
+  //           reference. Amber shift arrow shows the corrective
+  //           translation.
+  //   Right — the shifted forecast cropped to India. Outside-India
+  //           cells are blank.
+  //
+  // A header above the panel pair states the shift direction and
+  // magnitude in plain text so it's unambiguous.
+  const ff = out.fields_full || {};
+  const fm = out.fields || {};
+  const fcstFull      = ff.fcst    || fm.fcst;     // full bbox (preferred unmasked)
+  const shiftedMasked = fm.shifted || ff.shifted;  // India-cropped, post-shift
+  if (!fcstFull || !shiftedMasked) {
+    Plotly.purge(div);
+    div.innerHTML = `<div class="plot-error">CRA shift diagnostic: no field payload</div>`;
+    return;
+  }
+
+  const C_INDIA = "#f7f3e3";     // cream  — India outline (thick)
+  const C_ARROW = "#f0b264";     // amber  — corrective-shift vector
+  const C_FCST_DOT = "#f7f3e3";  // cream  — forecast centroid
+
+  // vmax = 98th percentile across BOTH panels' full data so the same
+  // color means the same rainfall on both sides. The left panel covers
+  // the whole bbox (water + land); the right is India-only.
+  const flatAll = [...fcstFull.values.flat(), ...shiftedMasked.values.flat()]
+    .filter(v => Number.isFinite(v));
+  const vmax = flatAll.length ? Math.max(1, percentile(flatAll, 0.98)) : 1;
+
+  const traces = [];
+  const annotations = [];
+
+  const panelMeta = [
+    { xa: "x",  ya: "y",  field: fcstFull,
+      title: "Before · whole forecast (full bbox, including over water)",
+      hoverLabel: "raw forecast" },
+    { xa: "x2", ya: "y2", field: shiftedMasked,
+      title: "After · shifted forecast, inside India outline",
+      hoverLabel: "shifted forecast" },
+  ];
+
+  panelMeta.forEach((p, idx) => {
+    // Single heatmap layer per panel. Left = full bbox at full opacity.
+    // Right = India-cropped (NaN outside India renders transparent).
+    traces.push({
+      type: "heatmap",
+      z: p.field.values, x: p.field.lon, y: p.field.lat,
+      colorscale: "YlGnBu", reversescale: false,
+      zmin: 0, zmax: vmax,
+      connectgaps: false, zsmooth: false,
+      showscale: idx === panelMeta.length - 1,
+      colorbar: idx === panelMeta.length - 1
+        ? { title: "rainfall (mm)", thickness: 10, len: 0.78,
+            x: 1.02, tickfont: { size: 10 } }
+        : undefined,
+      xaxis: p.xa, yaxis: p.ya,
+      hovertemplate: `${p.hoverLabel}<br>lat=%{y:.2f} lon=%{x:.2f}<br>%{z:.1f} mm<extra></extra>`,
+    });
+    // India outline on BOTH panels — the right panel's heatmap is
+    // cropped to India already, but the outline still helps the
+    // viewer locate cells against geographic features and gives the
+    // two panels a consistent visual anchor. Outline comes from the
+    // bundled shapefile (mainland only, simplified), drawn as a
+    // scatter line so it's a clean coastline, not a mask isocontour.
+    if (out.country_outline
+        && Array.isArray(out.country_outline.lat)
+        && Array.isArray(out.country_outline.lon)) {
+      traces.push({
+        type: "scatter", mode: "lines",
+        x: out.country_outline.lon,
+        y: out.country_outline.lat,
+        line: { color: C_INDIA, width: 1.8, shape: "linear" },
+        hoverinfo: "skip", showlegend: false,
+        xaxis: p.xa, yaxis: p.ya,
+      });
+    }
+    annotations.push({
+      text: `<b>${p.title}</b>`,
+      xref: `${p.xa} domain`, yref: `${p.ya} domain`,
+      x: 0.0, y: 1.04, xanchor: "left", yanchor: "bottom",
+      showarrow: false,
+      font: { size: 12, color: "#e4ddc9", family: "IBM Plex Sans, system-ui" },
+    });
+  });
+
+  // Corrective-shift vector. Drawn on the "before" panel as a thick
+  // amber arrow from the forecast centroid in the direction the
+  // optimizer chose to translate the field. Endpoint = centroid +
+  // (dx_cells × grid_spacing). The right panel literally shows the
+  // result of translating the left-panel heatmap by this vector.
+  const cs = out.corrective_shift || { dx: 0, dy: 0 };
+  // Keep float precision — ``subgrid_factor > 1`` produces fractional
+  // cell shifts (e.g. 0.25). Rounding to int silently hides any
+  // sub-cell shift as "no shift".
+  const dxCells = scalarFromCra(cs.dx).value ?? 0;
+  const dyCells = scalarFromCra(cs.dy).value ?? 0;
+  const spacing = out.grid_spacing || {};
+  const dlat = Number.isFinite(spacing.dlat) ? spacing.dlat : null;
+  const dlon = Number.isFinite(spacing.dlon) ? spacing.dlon : null;
+  // ε = 1/100 of a cell → smaller = "no shift" for display.
+  const SHIFT_EPS = 0.01;
+  const isShifted = Math.abs(dxCells) > SHIFT_EPS || Math.abs(dyCells) > SHIFT_EPS;
+  const centroids = out.centroids || {};
+  // Use the full (unmasked) forecast centroid as the arrow origin so
+  // the vector sits where the rain mass actually is, not where the
+  // India-cropped slice happens to fall.
+  const fc = centroids.fcst_full || centroids.fcst;
+  const fcShifted = centroids.shifted_full || centroids.shifted;
+  const centroidTraces = [];
+  const addCentroid = (c, xa, ya, color, name) => {
+    if (!c || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) return;
+    centroidTraces.push({
+      type: "scatter", mode: "markers",
+      x: [c.lon], y: [c.lat],
+      xaxis: xa, yaxis: ya,
+      marker: { color, size: 11, symbol: "circle",
+                line: { color: "#0a131d", width: 2 } },
+      name, showlegend: false,
+      hovertemplate: `${name}<br>lat=%{y:.2f} lon=%{x:.2f}<extra></extra>`,
+    });
+  };
+  addCentroid(fc,        "x",  "y",  C_FCST_DOT, "forecast centroid");
+  addCentroid(fcShifted, "x2", "y2", C_FCST_DOT, "shifted centroid");
+
+  if (fc && Number.isFinite(fc.lat) && dlat != null && dlon != null && isShifted) {
+    annotations.push({
+      xref: "x", yref: "y",
+      ax: fc.lon, ay: fc.lat,
+      x: fc.lon + dxCells * dlon, y: fc.lat + dyCells * dlat,
+      axref: "x", ayref: "y",
+      showarrow: true, arrowhead: 3, arrowsize: 1.8, arrowwidth: 4,
+      arrowcolor: C_ARROW, standoff: 6,
+    });
+  }
+
+  // Big shift-direction header centered between the panels — stated in
+  // plain words so the user reads "what the shift does" before they
+  // compare before/after. Sits ABOVE both panels. ε threshold so a
+  // sub-ε noise shift isn't shown as a phantom direction.
+  const dirX = Math.abs(dxCells) <= SHIFT_EPS ? "" : (dxCells > 0 ? "E" : "W");
+  const dirY = Math.abs(dyCells) <= SHIFT_EPS ? "" : (dyCells > 0 ? "N" : "S");
+  const dxDeg = dlon != null ? Math.abs(dxCells * dlon).toFixed(2) : null;
+  const dyDeg = dlat != null ? Math.abs(dyCells * dlat).toFixed(2) : null;
+  const shiftWords = !isShifted
+    ? "<b>No corrective shift</b> — forecast is already aligned"
+    : (() => {
+        const parts = [];
+        if (dirX) parts.push(`${Math.abs(dxCells).toFixed(2)} cells ${dirX==='E'?'east':'west'}${dxDeg?` (${dxDeg}°)`:""}`);
+        if (dirY) parts.push(`${Math.abs(dyCells).toFixed(2)} cells ${dirY==='N'?'north':'south'}${dyDeg?` (${dyDeg}°)`:""}`);
+        const arrow = (dirY === 'N' ? '↑' : dirY === 'S' ? '↓' : '') +
+                      (dirX === 'E' ? '→' : dirX === 'W' ? '←' : '');
+        return `<b>Shift direction:</b> <span style="color:${C_ARROW}">${arrow}</span> &nbsp; ${parts.join(", ")}`;
+      })();
+  annotations.push({
+    text: shiftWords,
+    xref: "paper", yref: "paper",
+    x: 0.5, y: 1.12, xanchor: "center", yanchor: "bottom",
+    showarrow: false,
+    font: { size: 13, color: "#e4ddc9", family: "IBM Plex Sans, system-ui" },
+    bgcolor: "rgba(240,178,100,0.10)",
+    bordercolor: C_ARROW, borderwidth: 1, borderpad: 6,
+  });
+
+  // Per-panel inset legend (top-left), describing what's drawn.
+  panelMeta.forEach((p, idx) => {
+    const lines = [];
+    if (idx === 0) {
+      lines.push("heatmap: <b>whole forecast</b> (over water + land)");
+      if (out.country_outline) {
+        lines.push(`<span style="color:${C_INDIA}">━</span> India outline (geographic)`);
+      }
+      lines.push(`<span style="color:${C_ARROW}">→</span> shift vector`);
+    } else {
+      lines.push("heatmap: <b>shifted forecast</b>, cropped to India");
+      if (out.country_outline) {
+        lines.push(`<span style="color:${C_INDIA}">━</span> India outline (geographic)`);
+      }
+    }
+    annotations.push({
+      text: lines.join("<br>"),
+      xref: `${p.xa} domain`, yref: `${p.ya} domain`,
+      x: 0.03, y: 0.97, xanchor: "left", yanchor: "top",
+      showarrow: false, align: "left",
+      font: { size: 10, color: "#e4ddc9", family: "IBM Plex Mono, ui-monospace" },
+      bgcolor: "rgba(8,14,22,0.78)",
+      bordercolor: "rgba(247,243,227,0.25)", borderwidth: 1, borderpad: 4,
+    });
+  });
+  // Resolution caption — native vs displayed cell counts, so the
+  // bilinear-upsampled rendering isn't mistaken for high-resolution
+  // measurements.
+  const gs = out.grid_spacing || {};
+  if (gs.native_ny && gs.display_ny) {
+    annotations.push({
+      text: `native data: ${gs.native_ny}×${gs.native_nx} cells (${(gs.dlat ?? 0).toFixed(1)}° spacing) · `
+          + `displayed: ${gs.display_ny}×${gs.display_nx} (bilinear interpolation, scoring still uses native cells)`,
+      xref: "paper", yref: "paper",
+      x: 0.0, y: -0.16, xanchor: "left", yanchor: "top",
+      showarrow: false,
+      font: { size: 9, color: "#857f6f", family: "IBM Plex Mono, ui-monospace" },
+    });
+  }
+
+  const layout = mergeLayout(PLOT_LAYOUT, {
+    grid: { rows: 1, columns: 2, pattern: "independent" },
+    xaxis:  { title: "lon", domain: [0.00, 0.47], constrain: "domain" },
+    yaxis:  { title: "lat", scaleanchor: "x" },
+    xaxis2: { title: "lon", domain: [0.52, 0.99], constrain: "domain" },
+    yaxis2: { title: "",    matches: "y", showticklabels: false },
+    height: 520,
+    margin: { l: 56, r: 96, t: 80, b: 50 },
     annotations,
     showlegend: false,
     paper_bgcolor: "rgba(0,0,0,0)",
@@ -1976,6 +2243,7 @@ async function refreshCra() {
     const primary = results.find(r => r.primary && r.out) || results.find(r => r.out);
     if (primary && primary.out) {
       renderCraMaps(primary.out, primary.label);
+      renderCraShiftDiagnostic(primary.out);
       const yrStr = years.length > 1 ? `${years[0]}–${years[years.length - 1]}` : `${years[0]}`;
       const cap = $("cra-caption");
       if (cap) cap.textContent = craCaptionText(primary.out, results.length, yrStr);
@@ -1985,13 +2253,19 @@ async function refreshCra() {
         const errs = results.filter(r => r.error).map(r => `${r.label}: ${r.error}`);
         cap.textContent = errs.length ? `error: ${errs[0]}` : "no result";
       }
-      try { Plotly.purge($("plot-cra-maps")); } catch (_) {}
+      try {
+        Plotly.purge($("plot-cra-maps"));
+        Plotly.purge($("plot-cra-shift"));
+      } catch (_) {}
       const maps = $("plot-cra-maps");
       if (maps) maps.innerHTML = `<div class="plot-error">CRA: primary model returned no data</div>`;
+      const shift = $("plot-cra-shift");
+      if (shift) shift.innerHTML = `<div class="plot-error">CRA: primary model returned no data</div>`;
     }
   } finally {
     setLoading($("plot-cra-bars"), false);
     setLoading($("plot-cra-maps"), false);
+    setLoading($("plot-cra-shift"), false);
   }
 }
 

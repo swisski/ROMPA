@@ -52,7 +52,10 @@ def _to_doy(values, *, season_end: int) -> np.ndarray:
     if np.issubdtype(arr.dtype, np.datetime64):
         # pandas handles NaT-aware DOY extraction with no Python loop.
         flat = pd.to_datetime(arr.ravel())
-        doy = flat.dayofyear.to_numpy(dtype=float)
+        # Newer pandas returns a read-only view from .to_numpy() for
+        # extension dtypes (DatetimeIndex.dayofyear is one). .copy()
+        # makes the result writable so we can poke NaN into NaT slots.
+        doy = flat.dayofyear.to_numpy(dtype=float, copy=True)
         doy[flat.isna()] = np.nan
         return doy.reshape(arr.shape)
     return arr.astype(float)

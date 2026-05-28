@@ -98,6 +98,37 @@ def field_payload(da: xr.DataArray) -> dict:
     }
 
 
+def upsampled_field_payload(da: xr.DataArray) -> dict:
+    """Display-only bilinear upsample of a 2-D field, then serialize.
+
+    Same Stage-1 smoothing the CRA panel uses: ~5× denser per axis on
+    coarse AICE grids (4° AIFS = 8×9, 2° ensembles = 16×17). NaN cells
+    (e.g. ocean under a land mask) are treated as a validity mask and
+    re-applied after interpolation, so the no-data structure is
+    preserved. Use this for fields the frontend renders as heatmaps
+    or computes contours from — onset DOY, rainfall, etc. — where the
+    visualization benefits from a smooth surface but the underlying
+    metric scoring still happens on native cells.
+    """
+    vals = np.asarray(da.values, dtype=float)
+    if vals.ndim != 2:
+        return field_payload(da)
+    lat = np.asarray(da["lat"].values, dtype=float)
+    lon = np.asarray(da["lon"].values, dtype=float)
+    mask = np.isfinite(vals)
+    if not mask.any():
+        return field_payload(da)
+    lat_d, lon_d, dense = _upsample_for_display(vals, lat, lon, mask=mask)
+    return {
+        "lat": lat_d.tolist(),
+        "lon": lon_d.tolist(),
+        "values": [
+            [None if not np.isfinite(v) else float(v) for v in row]
+            for row in dense
+        ],
+    }
+
+
 def compute_crps(ens: xr.DataArray, obs: xr.DataArray, *, season_end: int) -> dict:
     """Sentinel-augmented mixed-distribution CRPS.
 
@@ -440,6 +471,79 @@ def _align_forecast_to_obs_grid(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcs
     return np.asarray(da.interp_like(target, method="nearest").values, dtype=float)
 
 
+def _upsample_for_display(values: np.ndarray, lat: np.ndarray, lon: np.ndarray,
+                          *, mask: np.ndarray | None = None,
+                          target_cells: int = 16) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bilinear-upsample a 2-D field for visualization only.
+
+    At ``target_cells=16``, a 2° native grid (16×17 over India) passes
+    the "already big enough" gate and is shipped as-is — Plotly's
+    ``zsmooth='best'`` renderer-side bilinear is enough visual
+    smoothness without inflating the payload. A 4° native grid (8×9,
+    e.g. AIFS at the old resolution) still gets a 2× upsample so it's
+    not a chunky pixel block.
+
+    Coarse grids (4° AIFS = 8×9 cells over India, 2° ensembles = 16×17)
+    render as chunky pixel blocks and produce stair-stepped contour
+    lines. This helper interpolates the field onto a denser lat/lon
+    mesh so heatmaps and contours are visually smooth — the CRA metric
+    still scores on the native coarse cells, only the payload sent to
+    Plotly is upsampled.
+
+    If ``mask`` is given it is the country/display mask in the SAME
+    native shape as ``values``. The field is interpolated with NaN
+    cells filled to zero (so bilinear interp doesn't propagate NaN
+    across edges and eat the country interior); the mask is upsampled
+    separately via nearest-neighbor and reapplied at the end. Without
+    this two-pass approach, every cell of the dense grid that touches
+    an outside-country corner would go NaN and India would render
+    nearly empty.
+
+    No-op for grids already at or above ``target_cells`` per axis.
+    Returns ``(lat_dense, lon_dense, values_dense)``."""
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    ny, nx = vals.shape
+    if ny >= target_cells and nx >= target_cells:
+        return lat, lon, vals
+    factor_y = max(1, int(round(target_cells / max(ny, 1))))
+    factor_x = max(1, int(round(target_cells / max(nx, 1))))
+    factor = min(factor_y, factor_x)
+    if factor <= 1:
+        return lat, lon, vals
+    new_ny = (ny - 1) * factor + 1
+    new_nx = (nx - 1) * factor + 1
+    lat_d = np.linspace(lat[0], lat[-1], new_ny)
+    lon_d = np.linspace(lon[0], lon[-1], new_nx)
+
+    # Field: fill NaN to 0 so bilinear interp doesn't eat the interior.
+    vals_filled = np.where(np.isnan(vals), 0.0, vals)
+    da = xr.DataArray(
+        vals_filled, dims=("lat", "lon"),
+        coords={"lat": lat, "lon": lon},
+    )
+    dense = np.asarray(da.interp(lat=lat_d, lon=lon_d, method="linear").values, dtype=float)
+
+    # Mask: linearly interpolate (treats the binary mask as a fractional
+    # "inside-ness") and threshold at 0.5 — gives a smooth country
+    # boundary that follows the bilinear midpoints between native cells
+    # rather than the native cell grid. Nearest-neighbor here would
+    # leave the country edge stair-stepped at native resolution even
+    # though the heatmap interior is smooth.
+    if mask is not None:
+        mask_arr = np.asarray(mask, dtype=float)
+        mda = xr.DataArray(
+            mask_arr, dims=("lat", "lon"),
+            coords={"lat": lat, "lon": lon},
+        )
+        dense_mask = np.asarray(
+            mda.interp(lat=lat_d, lon=lon_d, method="linear").values
+        ) >= 0.5
+        dense = np.where(dense_mask, dense, np.nan)
+    return lat_d, lon_d, dense
+
+
 def _country_display_mask(country: str | None, obs_lat: np.ndarray, obs_lon: np.ndarray):
     """Boolean (lat, lon) mask of cells *inside* ``country``, or None.
 
@@ -463,9 +567,10 @@ def _country_display_mask(country: str | None, obs_lat: np.ndarray, obs_lon: np.
 
 def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarray,
                 obs_vals: np.ndarray, obs_lat: np.ndarray, obs_lon: np.ndarray,
-                *, case: str, threshold: float, max_shift: int,
+                *, case: str, threshold: float, max_shift: float,
+                subgrid_factor: int = 8,
                 include_fields: bool = True,
-                display_country: str | None = "India",
+                display_country: str | None = None,
                 max_payload_cells: int = 240) -> dict:
     """Run CRA decomposition and serialize the result.
 
@@ -501,20 +606,25 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
         obs=obs_2d,
         fcst=fcst_2d,
         threshold=float(threshold),
-        max_shift=int(max_shift),
+        max_shift=float(max_shift),
         verification_mask=region_mask,
+        subgrid_factor=int(subgrid_factor),
     )
 
     payload = {
         "case": result.case,
+        # Shift values in NATIVE CELL UNITS — floats now that
+        # subgrid_factor > 1 enables fractional-cell shifts (0.125 cells
+        # = 0.25° on a 2° native grid).
         "corrective_shift": {
-            "dx": int(result.corrective_shift_dx),
-            "dy": int(result.corrective_shift_dy),
+            "dx": float(result.corrective_shift_dx),
+            "dy": float(result.corrective_shift_dy),
         },
         "diagnosed_forecast_error": {
-            "dx": int(result.diagnosed_forecast_error_dx),
-            "dy": int(result.diagnosed_forecast_error_dy),
+            "dx": float(result.diagnosed_forecast_error_dx),
+            "dy": float(result.diagnosed_forecast_error_dy),
         },
+        "subgrid_factor": int(subgrid_factor),
         "mse": {
             "total": _none_if_nan(result.mse_total),
             "shifted": _none_if_nan(result.mse_shifted),
@@ -541,36 +651,82 @@ def compute_cra(fcst_vals: np.ndarray, fcst_lat: np.ndarray, fcst_lon: np.ndarra
         "max_shift": int(max_shift),
     }
     if include_fields:
+        # For centroid math we want the masked field (rainfall outside
+        # the country shouldn't pull the centroid). For display we want
+        # the unmasked rainfall fed into the upsampler with the mask
+        # re-applied AFTER upsampling — bilinear interp on a NaN-masked
+        # field propagates NaN across the country interior on coarse
+        # grids and renders India nearly empty.
+        payload["display_country"] = display_country if region_mask is not None else None
         if region_mask is not None:
-            obs_disp = np.where(region_mask, obs_2d, np.nan)
-            fcst_disp = np.where(region_mask, fcst_2d, np.nan)
-            shifted_disp = np.where(region_mask, shifted, np.nan)
-            payload["display_country"] = display_country
+            obs_centroid_field     = np.where(region_mask, obs_2d, np.nan)
+            fcst_centroid_field    = np.where(region_mask, fcst_2d, np.nan)
+            shifted_centroid_field = np.where(region_mask, shifted, np.nan)
         else:
-            obs_disp = obs_2d
-            fcst_disp = fcst_2d
-            shifted_disp = shifted
-            payload["display_country"] = None
-        payload["fields"] = {
-            "obs":     field_2d_payload(obs_disp,     obs_lat, obs_lon, max_cells=max_payload_cells),
-            "fcst":    field_2d_payload(fcst_disp,    obs_lat, obs_lon, max_cells=max_payload_cells),
-            "shifted": field_2d_payload(shifted_disp, obs_lat, obs_lon, max_cells=max_payload_cells),
-        }
-        # Centroids on the full (unmasked) fields too — needed so the
-        # forecast centroid is in its real location even when the unmasked
-        # forecast spills outside India; the corrective shift then moves it
-        # toward the obs centroid inside India.
+            obs_centroid_field     = obs_2d
+            fcst_centroid_field    = fcst_2d
+            shifted_centroid_field = shifted
+        # Centroids on the *native* grid (pre-upsample) so lat/lon arrays
+        # still match the field shape.
         payload["centroids"] = {
-            "obs":            _masked_centroid(obs_disp,     obs_lat, obs_lon),
-            "fcst":           _masked_centroid(fcst_disp,    obs_lat, obs_lon),
-            "shifted":        _masked_centroid(shifted_disp, obs_lat, obs_lon),
-            "fcst_full":      _masked_centroid(fcst_2d,      obs_lat, obs_lon),
-            "shifted_full":   _masked_centroid(shifted,      obs_lat, obs_lon),
+            "obs":            _masked_centroid(obs_centroid_field,     obs_lat, obs_lon),
+            "fcst":           _masked_centroid(fcst_centroid_field,    obs_lat, obs_lon),
+            "shifted":        _masked_centroid(shifted_centroid_field, obs_lat, obs_lon),
+            "fcst_full":      _masked_centroid(fcst_2d,                obs_lat, obs_lon),
+            "shifted_full":   _masked_centroid(shifted,                obs_lat, obs_lon),
         }
-        # Useful for the frontend to compute the absolute shift in lat/lon.
+        # Display-only upsample for coarse AICE grids (4° AIFS = 8×9
+        # cells, 2° ensembles = 16×17). Bilinear interpolation onto a
+        # ~5× finer mesh so heatmap AND contour render smoothly; CRA's
+        # actual scoring still happens on the native coarse cells, this
+        # only inflates the bytes Plotly draws with. ``target_cells=40``
+        # picks the smoothing factor to be visible but not deceptive.
+        #
+        # Two flavours of field payload:
+        #   - ``fields``      : country-masked (used by the existing 3-panel
+        #                        obs/fcst/shifted maps).
+        #   - ``fields_full`` : NOT masked (used by the shift panel — the
+        #                        forecast may sit over water before the
+        #                        shift and only land on India after, so
+        #                        cropping to India hides what's happening).
+        disp_lat, disp_lon, obs_dense     = _upsample_for_display(obs_2d,  obs_lat, obs_lon, mask=region_mask)
+        _,        _,        fcst_dense    = _upsample_for_display(fcst_2d, obs_lat, obs_lon, mask=region_mask)
+        _,        _,        shifted_dense = _upsample_for_display(shifted, obs_lat, obs_lon, mask=region_mask)
+        _,        _,        fcst_full_dense    = _upsample_for_display(fcst_2d, obs_lat, obs_lon)
+        _,        _,        shifted_full_dense = _upsample_for_display(shifted, obs_lat, obs_lon)
+        payload["fields"] = {
+            "obs":     field_2d_payload(obs_dense,     disp_lat, disp_lon, max_cells=max_payload_cells),
+            "fcst":    field_2d_payload(fcst_dense,    disp_lat, disp_lon, max_cells=max_payload_cells),
+            "shifted": field_2d_payload(shifted_dense, disp_lat, disp_lon, max_cells=max_payload_cells),
+        }
+        payload["fields_full"] = {
+            "fcst":    field_2d_payload(fcst_full_dense,    disp_lat, disp_lon, max_cells=max_payload_cells),
+            "shifted": field_2d_payload(shifted_full_dense, disp_lat, disp_lon, max_cells=max_payload_cells),
+        }
+        # Country outline as raw polygon vertices, NOT as a mask
+        # contour. The mask-contour approach traced the bilinearly-
+        # upsampled isocontour of a binary mask, which produced
+        # awkward shapes at coarse resolution (Northeast India
+        # protrusion etc). Using the geographic polygon coordinates
+        # gives a clean, recognizable country border at full
+        # natural-earth resolution. Mainland only — islands are
+        # dropped since they're irrelevant for the CRA shift story.
+        if display_country:
+            try:
+                from momp.utils.land_mask import country_polygon_coords
+                payload["country_outline"] = country_polygon_coords(display_country)
+            except (ValueError, ImportError):
+                pass
+        # Useful for the frontend to compute the absolute shift in lat/lon
+        # AND to display the native resolution of the source data so the
+        # bilinear smoothing isn't read as real spatial detail.
         payload["grid_spacing"] = {
             "dlat": float(abs(np.median(np.diff(obs_lat)))) if obs_lat.size > 1 else None,
             "dlon": float(abs(np.median(np.diff(obs_lon)))) if obs_lon.size > 1 else None,
+            "native_ny": int(obs_2d.shape[0]),
+            "native_nx": int(obs_2d.shape[1]),
+            "display_ny": int(disp_lat.size),
+            "display_nx": int(disp_lon.size),
         }
     return payload
 

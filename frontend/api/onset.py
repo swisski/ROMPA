@@ -176,12 +176,31 @@ def _detect_obs(obs: ObsInfo, year: int, params: OnsetParams) -> xr.DataArray:
     ROMP output for the same onset-criteria values — previously this
     routine used a simpler May–Sep per-cell loop and could disagree on
     edge-case years.
+
+    The post-Sep 30 search extension defaults to 47 days (India: catches
+    late-onset years that slip into October). For regions with a different
+    rain regime (e.g. Ethiopia, where post-Sep rainfall is Deyr, NOT a
+    late Kiremt) set ``ROMP_OBS_END_EXTEND_DAYS=0`` so Deyr cells stay
+    NaN on the obs side instead of being claimed as very-late Kiremt
+    onsets — those cells were a major contributor to the asymmetric-NaN
+    floor in IOE / SPS.
     """
+    import os
+    extend_end_day = int(os.environ.get("ROMP_OBS_END_EXTEND_DAYS", "47"))
     with xr.open_dataset(obs.path / f"{year}.nc") as ds:
         rain = ds[obs.var_name]
-        # detect_observed_onset expects a dim named "time".
-        if "TIME" in rain.dims:
-            rain = rain.rename({"TIME": "time"})
+        # detect_observed_onset expects dims named "time", "lat", "lon".
+        # 2° IMD obs uses TIME/latitude/longitude for years 1901-2022 and
+        # TIME/lat/lon for 2023+; CHIRPS-IMERG over Ethiopia uses uppercase
+        # LATITUDE/LONGITUDE — normalize all spellings.
+        renames = {}
+        if "TIME" in rain.dims: renames["TIME"] = "time"
+        if "latitude" in rain.dims: renames["latitude"] = "lat"
+        if "longitude" in rain.dims: renames["longitude"] = "lon"
+        if "LATITUDE" in rain.dims: renames["LATITUDE"] = "lat"
+        if "LONGITUDE" in rain.dims: renames["LONGITUDE"] = "lon"
+        if renames:
+            rain = rain.rename(renames)
         rain = rain.load()
 
     onset_da = detect_observed_onset(
@@ -194,10 +213,10 @@ def _detect_obs(obs: ObsInfo, year: int, params: OnsetParams) -> xr.DataArray:
         dry_threshold=params.dry_threshold,
         dry_extent=params.dry_extent,
         start_date=(int(year), 5, 1),    # May 1
-        end_date=(int(year), 9, 30),     # Sep 30 + 47 days slack
+        end_date=(int(year), 9, 30),     # Sep 30
         fallback_date=None,
         mok=None,
-        extend_end_day=47,
+        extend_end_day=extend_end_day,
     )
 
     # Convert datetime64 onset dates to DOY floats, NaT -> NaN.

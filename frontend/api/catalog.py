@@ -118,7 +118,14 @@ def load_catalog(root: Path = DATA_ROOT) -> dict:
         if sub.name.lower() == OBS_KEY:
             with xr.open_dataset(sub / f"{years[0]}.nc") as ds:
                 var = next(iter(ds.data_vars))
-            obs_info = ObsInfo(key="imd", label="IMD / observation",
+                title = str(ds.attrs.get("title", "")).strip()
+            # Label from ROMP_OBS_LABEL env, else the netCDF title attribute
+            # (CHIRPS files have "CHIRPS Version 3.0"; IMD files often don't
+            # set this), else a generic fallback. Key stays stable as "obs".
+            label = (os.environ.get("ROMP_OBS_LABEL", "").strip()
+                     or title
+                     or "observation")
+            obs_info = ObsInfo(key="obs", label=label,
                                path=sub, years=years, var_name=var)
             continue
         sample = sub / f"{years[0]}.nc"

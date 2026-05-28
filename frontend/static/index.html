@@ -335,13 +335,15 @@
               <label><span>lead start (days)</span><input id="cra_lead_start" type="number" min="0" step="1" value="1" /></label>
               <label><span>lead end (days)</span><input id="cra_lead_end" type="number" min="0" step="1" value="15" /></label>
               <label><span>threshold (mm)</span><input id="cra_threshold" type="number" min="0" step="0.5" value="1" /></label>
-              <label><span>max shift (cells)</span><input id="cra_max_shift" type="number" min="0" step="1" value="8" /></label>
+              <label><span>max shift (cells)</span><input id="cra_max_shift" type="number" min="0" step="1" value="4" /></label>
               <button id="cra_apply" class="apply-btn cra-apply">recompute CRA</button>
             </div>
             <div class="cra-section-label">MSE decomposition · % of forecast error explained by each piece</div>
             <div id="plot-cra-bars" class="plot plot-cra-bars"></div>
             <div class="cra-section-label cra-section-label-second">Rainfall accumulation maps · forecast (raw), shifted, vs observed — × marks the rainfall centroid; arrow is the corrective shift</div>
             <div id="plot-cra-maps" class="plot plot-cra-maps"></div>
+            <div class="cra-section-label cra-section-label-second">Shift vector · raw forecast rainfall (full bbox, water + land) with the corrective-shift arrow, beside the same field after the shift</div>
+            <div id="plot-cra-shift" class="plot plot-cra-shift"></div>
             <footer class="card-foot interp" id="cra-interp">
               CRA accumulates forecast rainfall over the lead window and
               compares against observed rainfall over the matching valid
@@ -354,6 +356,22 @@
               <strong>displacement</strong> piece. A forecast dominated by
               displacement error can be rescued by a coordinate correction;
               one dominated by pattern needs structural improvement.
+              <br /><br />
+              The shift-vector panel below shows the corrective shift
+              as exactly what it is: a translation of the forecast
+              field. The <strong>left panel</strong> is the raw
+              forecast rainfall — full bbox, including cells over
+              water — with a thick amber arrow drawn from the forecast
+              centroid in the direction the optimizer chose to shift
+              the field. The <strong>right panel</strong> is the result
+              of applying that translation: the same rainfall pattern,
+              now sitting where the optimizer thinks it should have
+              been. Cells that were over the Bay of Bengal before the
+              shift can become India cells after, and vice versa — the
+              full-extent view is the only way to see that.
+              The dotted India outline is for geographic reference; the
+              CRA scoring still uses only India cells via the
+              verification mask.
             </footer>
           </section>
 

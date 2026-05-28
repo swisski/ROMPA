@@ -286,6 +286,103 @@ def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name=
         return da_masked
 
 
+def _polygon_coords_from_shapefile(shapefile_path, tolerance: float = 0.05) -> dict:
+    """Load a country shapefile, return the simplified mainland polygon.
+
+    Works with any (multi)polygon shapefile readable by geopandas. Picks
+    the largest polygon (mainland), drops everything else (islands,
+    enclaves), Douglas-Peucker simplifies at ``tolerance`` degrees,
+    returns the exterior as ``{"lat": [...], "lon": [...]}``.
+    """
+    import geopandas as gpd
+    gdf = gpd.read_file(shapefile_path)
+    # Pick the geometrically-largest polygon. Handles both a single
+    # MultiPolygon row and many Polygon rows.
+    def _all_parts(geom):
+        if geom is None:
+            return []
+        if geom.geom_type == "MultiPolygon":
+            return list(geom.geoms)
+        return [geom]
+    parts = [p for g in gdf.geometry for p in _all_parts(g)]
+    if not parts:
+        raise ValueError(f"no polygons in shapefile {shapefile_path}")
+    mainland = max(parts, key=lambda p: p.area)
+    simplified = mainland.simplify(float(tolerance), preserve_topology=True)
+    coords = list(simplified.exterior.coords)
+    return {
+        "lat": [float(c[1]) for c in coords],
+        "lon": [float(c[0]) for c in coords],
+    }
+
+
+# Region → bundled-shapefile path. When ROMP runs against ``aice_data``,
+# we prefer the bundled shapefile over natural-earth: the bundle's
+# shapefile is the authoritative outline the project's other code uses
+# (verification mask, plotting in the demo scripts) and has finer
+# resolution than the simplified natural-earth polygon.
+_BUNDLED_SHAPEFILE_HINTS = {
+    "india": [
+        "../aice_data/ind_map_shpfile/india_shapefile.shp",
+        "aice_data/ind_map_shpfile/india_shapefile.shp",
+    ],
+}
+
+
+def country_polygon_coords(region: str, *, tolerance: float = 0.05) -> dict:
+    """Return the simplified mainland polygon exterior as lat/lon arrays.
+
+    Prefers a bundled high-resolution shapefile from ``aice_data`` when
+    one is registered for the region (currently India); falls back to
+    ``regionmask``'s natural-earth polygon when not. Either source is
+    reduced to the largest polygon (mainland — drops islands,
+    enclaves), Douglas-Peucker-simplified at ``tolerance`` degrees,
+    and returned as ``{"lat": [...], "lon": [...]}``.
+    """
+    import os
+    # Override via env: ROMP_SHAPEFILE_DIR=/path/to/aice_data lets the
+    # caller point at a shapefile bundle that isn't a sibling of cwd.
+    extra_bases = []
+    if os.environ.get("ROMP_SHAPEFILE_DIR"):
+        extra_bases.append(os.environ["ROMP_SHAPEFILE_DIR"])
+    for hint in _BUNDLED_SHAPEFILE_HINTS.get(region.lower(), []):
+        candidates = [hint]
+        if not os.path.isabs(hint):
+            for base in ("", "..", "../..", *extra_bases):
+                candidates.append(os.path.join(base, hint) if base else hint)
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    return _polygon_coords_from_shapefile(path, tolerance=tolerance)
+                except Exception:
+                    pass  # fall through to natural-earth
+
+    # Natural-earth fallback (works for any country, used when no bundled
+    # shapefile is available — e.g. Ethiopia before the data lands).
+    countries = regionmask.defined_regions.natural_earth_v5_0_0.countries_10
+    names_lower = [nm.lower() for nm in countries.names]
+    target = region.lower()
+    if target in names_lower:
+        idx = names_lower.index(target)
+    else:
+        hits = [i for i, nm in enumerate(names_lower) if target in nm]
+        if len(hits) == 1:
+            idx = hits[0]
+        else:
+            raise ValueError(f"region {region!r} not found in natural_earth countries")
+    poly = countries.polygons[idx]
+    if poly.geom_type == "MultiPolygon":
+        mainland = max(poly.geoms, key=lambda g: g.area)
+    else:
+        mainland = poly
+    simplified = mainland.simplify(float(tolerance), preserve_topology=True)
+    coords = list(simplified.exterior.coords)
+    return {
+        "lat": [float(c[1]) for c in coords],
+        "lon": [float(c[0]) for c in coords],
+    }
+
+
 def country_mask(da, region):
     """Boolean (lat, lon) mask for a Natural Earth country, via regionmask.
 

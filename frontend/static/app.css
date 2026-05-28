@@ -944,7 +944,8 @@ select {
 }
 .cra-section-label-second { margin-top: 18px; }
 .plot-cra-bars { min-height: 240px; }
-.plot-cra-maps { min-height: 440px; }
+.plot-cra-maps { min-height: 500px; }
+.plot-cra-shift { min-height: 540px; }
 .cra-controls {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
