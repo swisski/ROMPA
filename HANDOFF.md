@@ -12,22 +12,53 @@ to give you the chance to look at the additions and decide which
 pieces (if any) are worth pulling in piecemeal vs adopting the fork
 wholesale.
 
+> **Status: work in progress.** This is a snapshot at the end of the
+> capstone term, not a finished release. The two tracks we'd point at
+> as closest to publication-ready are **CRA** (algorithmic identity
+> nailed down, sub-cell shifts, regression test, shift-vector
+> diagnostic in the UI) and the **progression-curve metrics
+> (IOE + SPS)** plus their **isochrone overlay** (design doc, executed
+> notebooks, intersection-clipped d-axis, three-cue rendering). The
+> other four metrics — CRPS, FSS, displacement, CORP — are functional
+> and tested, but had less iteration. Treat them as v0.x. The
+> dashboard is a daily-driver for our own analysis, but it's still
+> rough around the edges in places we call out below.
+
 This document tells you what's there, how to try it in five minutes,
 and what we'd flag if we were reviewing the diff.
 
 ## What we added
 
-Three tracks:
+Two tracks (metrics + dashboard). Polish level inside the metrics
+track is uneven on purpose — we deepened the two we picked as
+capstone deep-dives (CRA + progression curve) and left the rest at
+v0.x.
 
-1. **Six new verification metrics in `momp/`** — CRPS, FSS,
-   displacement/area, CORP, IOE+SPS, isochrone geometry. Each
-   tracks back to a specific paper; the map is in
+1. **Seven new verification metrics in `momp/`**.
+   - **Most polished:** progression curve (IOE + SPS, with isochrone
+     geometry) — `momp/metrics/progression.py`, `momp/graphics/isochrone.py`.
+     This is the one with the methods-doc-style write-up
+     (`docs/DESIGN_metrics_extension.md` §8), executed notebooks,
+     d-axis intersection clipping, three-cue rendering, and the
+     longest test list.
+   - **Also polished:** CRA (Ebert & McBride 2000) — `momp/metrics/cra.py`.
+     Initially contributed by Gio Hernandez via PR #1, then
+     reworked on the fork: fixed score mask (decomposition identity
+     now exact + asserted), sub-cell shift search, regression test
+     for the variable-mask denominator bug, UI shift-vector
+     diagnostic.
+   - **Functional but earlier-stage:** CRPS (`momp/metrics/crps.py`),
+     FSS (`momp/metrics/neighborhood.py`), displacement / area bias
+     (`momp/metrics/displacement.py`), CORP reliability
+     (`momp/graphics/corp_reliability.py`). All tested and wired
+     into the dashboard, but they didn't get the same number of
+     iteration rounds as CRA and progression. Treat them as the
+     first cut.
+
+   Each metric tracks back to a specific paper; the map is in
    `docs/METRICS_AND_PAPERS.md`.
-2. **CRA (Ebert & McBride 2000) as a seventh metric**, initially
-   contributed by Gio Hernandez via PR #1 and improved on the fork
-   with a fixed score mask (decomposition identity now exact),
-   sub-cell shift search, and a UI shift-vector diagnostic.
-3. **An interactive verification dashboard** (`frontend/`) — FastAPI +
+
+2. **An interactive verification dashboard** (`frontend/`) — FastAPI +
    vanilla-JS + Plotly — that lets you compare any subset of S2S
    models across any year range against IMD/CHIRPS observations, on
    any of the metrics, with multi-year aggregation and per-panel

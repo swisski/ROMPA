@@ -29,6 +29,18 @@ The baseline ROMP package (`momp/`) — onset detection,
 configuration plumbing, the binned-skill-score driver — is **left
 intact and continues to work**. The fork only adds.
 
+> **Status: work in progress.** This is a snapshot at the end of the
+> UChicago DSI Capstone term, not a finished release. Within the
+> metrics track, **CRA** and the **progression-curve metrics
+> (IOE + SPS + isochrones)** are the two we deepened to near-
+> publication quality (design doc, executed notebooks, regression
+> tests for known failure modes, polished UI panels). The other
+> four — CRPS, FSS, displacement, CORP — are functional, tested,
+> and wired into the dashboard, but had fewer iteration rounds.
+> Treat them as v0.x. The dashboard itself is a daily-driver but
+> still has rough edges (see "What's not done" in
+> [docs/FORK_SUMMARY.md](docs/FORK_SUMMARY.md)).
+
 For the per-commit / per-feature narrative, including everything
 fixed in audit passes, see **[docs/FORK_SUMMARY.md](docs/FORK_SUMMARY.md)**.
 For the metric ↔ paper map and acronym glossary, see
@@ -39,19 +51,24 @@ release-level notes, see **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
 ## What's new at a glance
 
-| Track                 | Where                                    | Status |
-| --------------------- | ---------------------------------------- | ------ |
-| CRPS (mixed dist'n)   | `momp/metrics/crps.py`                   | ✓      |
-| FSS                   | `momp/metrics/neighborhood.py`           | ✓      |
-| Centroid / area bias  | `momp/metrics/displacement.py`           | ✓      |
-| CORP reliability      | `momp/graphics/corp_reliability.py`      | ✓      |
-| IOE + SPS             | `momp/metrics/progression.py`            | ✓      |
-| Isochrone geometry    | `momp/graphics/isochrone.py`             | ✓      |
-| CRA decomposition     | `momp/metrics/cra.py`                    | ✓      |
-| Dashboard backend     | `frontend/api/*.py`                      | ✓      |
-| Dashboard frontend    | `frontend/static/*`                      | ✓      |
-| India support         | env: `ROMP_LAND_MASK=India`              | ✓      |
-| Ethiopia support      | env: `ROMP_LAND_MASK=Ethiopia`           | ✓      |
+Polish levels: ★★★ = capstone deep-dive (papers, regression tests
+for known failure modes, polished UI), ★★ = solid first cut
+(tested + wired in, fewer iteration rounds), ★ = WIP (works, but
+expect rough edges).
+
+| Track                 | Where                                    | Polish |
+| --------------------- | ---------------------------------------- | :----: |
+| IOE + SPS             | `momp/metrics/progression.py`            | ★★★    |
+| Isochrone geometry    | `momp/graphics/isochrone.py`             | ★★★    |
+| CRA decomposition     | `momp/metrics/cra.py`                    | ★★★    |
+| CRPS (mixed dist'n)   | `momp/metrics/crps.py`                   | ★★     |
+| FSS                   | `momp/metrics/neighborhood.py`           | ★★     |
+| Centroid / area bias  | `momp/metrics/displacement.py`           | ★★     |
+| CORP reliability      | `momp/graphics/corp_reliability.py`      | ★★     |
+| Dashboard backend     | `frontend/api/*.py`                      | ★★     |
+| Dashboard frontend    | `frontend/static/*`                      | ★★     |
+| India support         | env: `ROMP_LAND_MASK=India`              | ★★★    |
+| Ethiopia support      | env: `ROMP_LAND_MASK=Ethiopia`           | ★      |
 
 **Test count:** 175 unit / known-answer tests (12 of which are
 integration tests, auto-skipped when demo data isn't present). All
