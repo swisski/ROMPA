@@ -1,5 +1,4 @@
-# ROMPA — ROMP with extra verification metrics and an interactive
-dashboard
+# ROMPA — ROMP with extra verification metrics and an interactive dashboard
 
 **ROMPA** is a fork of [bosup/ROMP](https://github.com/bosup/ROMP) —
 the Rainy Season Onset Metrics Package — adding:
@@ -30,19 +29,16 @@ configuration plumbing, the binned-skill-score driver — is **left
 intact and continues to work**. The fork only adds.
 
 > **Status: work in progress.** This is a snapshot at the end of the
-> UChicago DSI Capstone term, not a finished release. Within the
+> UChicago DSI Clinic term, not a finished release. Within the
 > metrics track, **CRA** and the **progression-curve metrics
-> (IOE + SPS + isochrones)** are the two we deepened to near-
-> publication quality (design doc, executed notebooks, regression
-> tests for known failure modes, polished UI panels). The other
+> (IOE + SPS + isochrones)** are the two we polished most thoroughly. The other
 > four — CRPS, FSS, displacement, CORP — are functional, tested,
 > and wired into the dashboard, but had fewer iteration rounds.
 > Treat them as v0.x. The dashboard itself is a daily-driver but
 > still has rough edges (see "What's not done" in
 > [docs/FORK_SUMMARY.md](docs/FORK_SUMMARY.md)).
 
-For the per-commit / per-feature narrative, including everything
-fixed in audit passes, see **[docs/FORK_SUMMARY.md](docs/FORK_SUMMARY.md)**.
+For the per-commit / per-feature narrative, see **[docs/FORK_SUMMARY.md](docs/FORK_SUMMARY.md)**.
 For the metric ↔ paper map and acronym glossary, see
 **[docs/METRICS_AND_PAPERS.md](docs/METRICS_AND_PAPERS.md)**. For
 release-level notes, see **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
@@ -69,10 +65,6 @@ expect rough edges).
 | Dashboard frontend    | `frontend/static/*`                      | ★★     |
 | India support         | env: `ROMP_LAND_MASK=India`              | ★★★    |
 | Ethiopia support      | env: `ROMP_LAND_MASK=Ethiopia`           | ★      |
-
-**Test count:** 175 unit / known-answer tests (12 of which are
-integration tests, auto-skipped when demo data isn't present). All
-green at HEAD.
 
 ---
 
