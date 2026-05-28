@@ -30,8 +30,9 @@ been merged into `main` and the fork is in a shippable state.
   of the Brier score; proper-score identity residual at floating-point
   zero. Reports `N_eff` via Moran's I (Dutilleul 1993).
 - **IOE + SPS** (`momp/metrics/progression.py`) — Integrated Onset
-  Error (Goessling 2016 IIEE-analog) and Spatial Probability Score
-  (Goessling & Jung 2018). SPS reduces exactly to IOE for a 1-member
+  Error (Goessling et al. 2016 IIEE-analog) and Spatial Probability
+  Score (Goessling & Jung 2018). SPS reduces exactly to IOE for a
+  1-member
   ensemble.
 - **Isochrone geometry** (`momp/graphics/isochrone.py`) — contour
   extraction with NaN-sentinel substitution + Hausdorff + Fréchet
@@ -157,10 +158,14 @@ shift — the part the India-cropped 3-panel hides.
 
 ### Terminology
 
-- Retracted an incorrect "equivalent to Hemri 2014" claim in CRPS
-  docstrings and the design doc. Correct citations:
-  Hersbach 2000, Gneiting & Raftery 2007, Ferro 2014, Leutbecher
-  2019.
+- Retracted an incorrect "equivalent to Hemri et al. 2014" claim
+  in CRPS docstrings and the design doc. The Hemri et al. 2014
+  GRL paper is about predictive-performance trends, not censored
+  CRPS, so the citation was wrong on its face; the closed-form
+  CRPS for a censored Gaussian is in Jordan, Krüger & Lerch
+  (2019), JSS, and the construction here is a different object
+  anyway. Correct citations for what's implemented: Hersbach 2000,
+  Gneiting & Raftery 2007, Ferro 2014, Leutbecher 2019.
 
 ### Documentation
 

@@ -65,8 +65,9 @@ zero.
 ### Milestone 2: progression verification
 
 **`momp/metrics/progression.py`** — Integrated Onset Error (IOE,
-adapted from Goessling 2016 IIEE) and Spatial Probability Score
-(SPS, Goessling 2018). IOE is the area of symmetric difference
+adapted from Goessling et al. 2016 IIEE) and Spatial Probability
+Score (SPS, Goessling & Jung 2018). IOE is the area of symmetric
+difference
 between forecast and observed "onset-by-`d`" masks, area-weighted on
 the sphere. SPS generalizes to ensembles via per-cell Brier of
 `P(onset ≤ d)`. SPS reduces exactly to IOE for a 1-member
@@ -357,10 +358,15 @@ The Ethiopia adapter required exactly three changes:
 
 ### Terminology
 
-- Retracted an incorrect "equivalent to Hemri 2014" claim in
-  docstrings and the design doc. Correct framing is
-  "sentinel-augmented mixed-distribution CRPS" citing Hersbach 2000,
-  Gneiting & Raftery 2007, Ferro 2014, Leutbecher 2019.
+- Retracted an incorrect "equivalent to Hemri et al. 2014" claim
+  in docstrings and the design doc. The Hemri et al. 2014 GRL
+  paper is about predictive-performance trends, not censored CRPS,
+  so the citation was simply wrong; the closed-form CRPS for a
+  censored Gaussian is in Jordan, Krüger & Lerch 2019, JSS, and
+  the construction here is a *different* object anyway. Correct
+  framing of what's implemented: "sentinel-augmented mixed-
+  distribution CRPS" citing Hersbach 2000, Gneiting & Raftery
+  2007, Ferro 2014, Leutbecher 2019.
 
 ---
 

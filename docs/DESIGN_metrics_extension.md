@@ -39,19 +39,25 @@ distribution: no-onset outcomes are mapped to a sentinel value beyond the
 verification window and the Hersbach (2000) ensemble CRPS is then evaluated
 in the augmented sample space. By Gneiting & Raftery (2007) this is a
 proper score for the mixed distribution. It is *related to but not
-identical with* the analytical censored-Gaussian CRPS of Hemri et al.
-(2014, GRL), which derives a closed form for a Gaussian forecast
-censored at a known threshold — a distinct object. We should not claim
-equivalence with Hemri 2014. The fair (Ferro 2014) finite-ensemble bias
-correction is also applied by default for ensembles with m ≥ 2.
+identical with* the analytical closed-form CRPS for a censored
+Gaussian (the canonical reference for that closed form is Jordan,
+Krüger & Lerch 2019, *J. Stat. Software*), which is specific to a
+Gaussian forecast censored at a known threshold — a distinct object.
+We should not claim equivalence with that closed form. An earlier
+draft cited "Hemri et al. 2014 *GRL*" as the reference for the
+censored-Gaussian closed form; that citation was wrong (the Hemri
+2014 GRL paper is about predictive-performance trends, not censored
+CRPS) and has been removed. The fair (Ferro 2014) finite-ensemble
+bias correction is also applied by default for ensembles with m ≥ 2.
 
 **References:**
 - Hersbach 2000, *Wea. Forecasting* — ensemble CRPS closed form.
 - Gneiting & Raftery 2007, *JASA* — proper scoring rules tutorial.
 - Ferro 2014, *QJRMS* — fair scores for ensemble forecasts.
 - Leutbecher 2019, *QJRMS* — ensemble size and scoring-rule bias.
-- Hemri et al. 2014, *GRL* — analytical censored-Gaussian CRPS (related,
-  different construction).
+- Jordan, Krüger & Lerch 2019, *JSS* — analytical censored-Gaussian
+  CRPS closed form (related, different construction; referenced for
+  contrast only).
 
 **Module:** `momp/metrics/crps.py`
 
@@ -156,7 +162,7 @@ New scientific axis. Ships as ROMP 0.2.0 and forms the basis of a methods paper.
 
 ### 4.1 Core idea
 
-Treat onset as an *advancing front* rather than a static DOY map. For any calendar day `d` in the onset window, the binary field `onset_by_d(x) = (onset_DOY(x) ≤ d)` defines a contour separating "monsoon has arrived" from "has not." Verification then scores the forecast and observed contours — directly, at each `d`, and integrated over the season. This mirrors sea-ice edge verification (Goessling 2016, 2018), where an analogous problem has a mature solution.
+Treat onset as an *advancing front* rather than a static DOY map. For any calendar day `d` in the onset window, the binary field `onset_by_d(x) = (onset_DOY(x) ≤ d)` defines a contour separating "monsoon has arrived" from "has not." Verification then scores the forecast and observed contours — directly, at each `d`, and integrated over the season. This mirrors sea-ice edge verification (Goessling et al. 2016 IIEE; Goessling & Jung 2018 SPS), where an analogous problem has a mature solution.
 
 ### 4.2 Integrated Onset Error (IOE)
 
@@ -190,7 +196,7 @@ def integrated_onset_error(
 
 **What:** Ensemble extension of IOE. For each day `d`, SPS(d) = integrated Brier score over cells of `P_fcst(onset ≤ d)` vs `1_obs(onset ≤ d)`. Reduces to IOE for a deterministic member.
 
-**Reference:** Goessling 2018, *QJRMS* — SPS for sea-ice contours.
+**Reference:** Goessling & Jung 2018, *QJRMS* — SPS for sea-ice contours.
 
 **Module:** same as IOE.
 

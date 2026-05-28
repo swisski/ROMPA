@@ -13,11 +13,16 @@ ensemble members and the observation are each mapped into this space and the
 Hersbach (2000) ensemble CRPS is evaluated there.
 
 This construction is *related to but not identical with* the analytical
-censored-Gaussian CRPS of Hemri et al. (2014, GRL) — their closed form is
-specific to censored Gaussian forecasts, whereas the sentinel-augmented
-ensemble construction here works for any ensemble distribution and remains
-a proper scoring rule for the mixed onset distribution by Gneiting &
-Raftery (2007).
+closed-form CRPS for a censored Gaussian (canonical reference:
+Jordan, Krueger & Lerch 2019, *J. Stat. Software*). That closed form
+is specific to a Gaussian forecast censored at a known threshold,
+whereas the sentinel-augmented ensemble construction here works for
+any ensemble distribution and remains a proper scoring rule for the
+mixed onset distribution by Gneiting & Raftery (2007). An earlier
+draft of this module cited "Hemri et al. 2014, GRL" as the
+closed-form reference; that citation was wrong (Hemri et al. 2014
+GRL is about predictive-performance trends, not censored CRPS) and
+has been removed.
 
 A diagnostic ``censored_crps_decomposition`` splits the score into a Brier
 term for the onset-occurrence atom and a continuous CRPS term on the
@@ -28,9 +33,11 @@ proper-score constructions).
 References
 ----------
 Hersbach 2000, *Wea. Forecasting* 15, 559-570.
-Hemri et al. 2014, *Geophys. Res. Lett.* 41, 9197-9205.
-Scheuerer & Hamill 2015, *Mon. Wea. Rev.* 143, 4578-4596 (CSGD).
-Jordan, Krueger, Lerch 2019, *J. Stat. Softw.* 90 (scoringRules).
+Gneiting & Raftery 2007, *JASA* 102, 359-378 (proper scoring rules).
+Ferro 2014, *QJRMS* 140, 1917-1923 (fair correction).
+Leutbecher 2019, *QJRMS* 145, 107-128 (ensemble-size bias).
+Jordan, Krueger & Lerch 2019, *J. Stat. Softw.* 90 (12) — analytical
+    closed-form CRPS for censored Gaussian, referenced for contrast only.
 """
 
 from __future__ import annotations
@@ -139,12 +146,13 @@ def censored_crps(
 
     NOTE ON TERMINOLOGY: This is a **sentinel-augmented ensemble CRPS** for
     the mixed atom-plus-continuous onset distribution. It is *related to*
-    but *not identical with* the analytical censored-Gaussian CRPS of
-    Hemri et al. (2014, GRL) — that paper derives a closed form for a
-    Gaussian forecast censored at a known threshold, which is a distinct
-    object. The construction here maps the "no-onset" atom to a sentinel
-    placed beyond the verification window and evaluates the Hersbach
-    ensemble CRPS in the augmented sample space; this remains a proper
+    but *not identical with* the analytical closed-form CRPS for a
+    censored Gaussian (Jordan, Krueger & Lerch 2019, JSS) — that
+    closed form derives a CRPS for a Gaussian forecast censored at a
+    known threshold, which is a distinct object. The construction
+    here maps the "no-onset" atom to a sentinel placed beyond the
+    verification window and evaluates the Hersbach ensemble CRPS in
+    the augmented sample space; this remains a proper
     score for the mixed distribution by Gneiting & Raftery (2007).
 
     Parameters

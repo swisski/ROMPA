@@ -82,10 +82,16 @@ space. By Gneiting & Raftery (2007) this is a proper score for the
 mixed distribution.
 
 > Important nuance preserved in the docstrings: this is **not** the
-> analytical censored-Gaussian CRPS of Hemri et al. 2014. Hemri's
-> closed form is specific to a Gaussian forecast censored at a known
-> threshold — a different object. An earlier draft of this fork
-> claimed equivalence with Hemri 2014; that claim was retracted.
+> analytical closed-form CRPS for a censored Gaussian (the standard
+> reference for that closed form is Jordan, Krüger & Lerch 2019,
+> *J. Stat. Software*). The closed form is specific to a Gaussian
+> forecast censored at a known threshold — a different object than
+> the sentinel-augmented ensemble construction used here. An earlier
+> draft of this fork cited "Hemri et al. 2014" as the closed-form
+> reference for this; that citation was both wrong (Hemri et al.
+> 2014 GRL is about predictive-performance trends, not censored
+> CRPS) and unnecessary (the constructions are different anyway),
+> so it has been removed.
 
 **Fair correction.** Default-on for ensembles with `m ≥ 2` members
 via the Ferro (2014) / Leutbecher (2019) `1 / (m (m − 1))` denominator
@@ -105,8 +111,11 @@ be compared on equal footing.
 - Leutbecher, M. (2019). Ensemble size: How suboptimal is less than
   infinity? *Quarterly Journal of the Royal Meteorological Society*
   145, 107–128.
-- Hemri, S., Lisniak, D., & Klein, B. (2014) is **referenced for
-  contrast**, not as the basis of the implementation.
+- Jordan, A., Krüger, F., & Lerch, S. (2019). Evaluating
+  probabilistic forecasts with `scoringRules`. *Journal of
+  Statistical Software* 90 (12). doi:10.18637/jss.v090.i12 —
+  contains the analytical closed-form CRPS for a censored Gaussian,
+  referenced here only for contrast.
 
 **Code.** `momp/metrics/crps.py` — `crps_ensemble`, `censored_crps`,
 `censored_crps_decomposition` (the diagnostic Brier-on-atom split).
@@ -155,8 +164,9 @@ Moran's I (queen-4 spatial autocorrelation) using the Dutilleul
   the National Academy of Sciences* 118 (8): e2016191118.
 - Moran, P. A. P. (1950). Notes on continuous stochastic phenomena.
   *Biometrika* 37, 17–23.
-- Dutilleul, P. (1993). Modifying the t test for assessing the
-  correlation between two spatial processes. *Biometrics* 49, 305–314.
+- Dutilleul, P., Clifford, P., Richardson, S., & Hemon, D. (1993).
+  Modifying the t test for assessing the correlation between two
+  spatial processes. *Biometrics* 49, 305–314.
 
 **Code.** `momp/graphics/corp_reliability.py` — `corp_decompose_brier`
 returning a `CORPDecomposition` dataclass. Effective-N machinery in
@@ -377,7 +387,10 @@ choice and the use of Hausdorff / Fréchet on contours come from the
 contour-verification literature:
 
 - Hausdorff distance — a classical set-distance: the largest
-  shortest-distance from any point on one curve to the other. (Definition: Munkres, J. R. *Topology* (2nd ed., 2000), §45.)
+  shortest-distance from any point on one curve to the other. (Standard
+  reference for the Hausdorff metric on compact subsets of a metric
+  space: Burago, D., Burago, Y., & Ivanov, S. (2001). *A Course in
+  Metric Geometry*, AMS GSM 33, §7.3.)
 - Fréchet distance — the "leash" distance respecting traversal
   order. The discrete-curve algorithm used here is
 
@@ -505,14 +518,27 @@ sufficient for production use.
 - Dimitriadis, T., Gneiting, T., & Jordan, A. I. (2021). Stable
   reliability diagrams for probabilistic classifiers. *PNAS*
   118 (8): e2016191118.
-- Dutilleul, P. (1993). Modifying the t test for assessing the
-  correlation between two spatial processes. *Biometrics* 49,
-  305–314.
+- Dutilleul, P., Clifford, P., Richardson, S., & Hemon, D. (1993).
+  Modifying the t test for assessing the correlation between two
+  spatial processes. *Biometrics* 49, 305–314.
+- Burago, D., Burago, Y., & Ivanov, S. (2001). *A Course in Metric
+  Geometry.* American Mathematical Society Graduate Studies in
+  Mathematics, vol. 33. (§7.3 — Hausdorff metric on compact sets.)
+- Chevuturi, A., Turner, A. G., Johnson, S., Weisheimer, A., Shonk,
+  J. K. P., Stockdale, T. N., & Senan, R. (2021). Forecast skill of
+  the Indian monsoon and its onset in the ECMWF seasonal forecasting
+  system 5 (SEAS5). *Climate Dynamics* 56, 4097–4113.
+  doi:10.1007/s00382-020-05624-5
+- Ebert, E. E., & Gallus, W. A., Jr. (2009). Toward better
+  understanding of the Contiguous Rain Area (CRA) method for spatial
+  forecast verification. *Weather and Forecasting* 24, 1401–1415.
+  doi:10.1175/2009WAF2222252.1
 - Ebert, E. E., & McBride, J. L. (2000). Verification of precipitation
   in weather systems: Determination of systematic errors. *Journal
   of Hydrology* 239, 179–202. (CRA — classmate's contribution.)
 - Eiter, T., & Mannila, H. (1994). Computing discrete Fréchet
-  distance. Tech. report, TU Vienna.
+  distance. Technical Report CD-TR 94/64, Christian Doppler
+  Laboratory for Expert Systems, TU Vienna.
 - Ferro, C. A. T. (2014). Fair scores for ensemble forecasts.
   *QJRMS* 140, 1917–1923.
 - Gneiting, T., & Raftery, A. E. (2007). Strictly proper scoring
@@ -525,6 +551,11 @@ sufficient for production use.
 - Hersbach, H. (2000). Decomposition of the continuous ranked
   probability score for ensemble prediction systems. *Weather and
   Forecasting* 15, 559–570.
+- Jordan, A., Krüger, F., & Lerch, S. (2019). Evaluating
+  probabilistic forecasts with `scoringRules`. *Journal of
+  Statistical Software* 90 (12). (Referenced for contrast — contains
+  the analytical closed-form CRPS for a censored Gaussian, distinct
+  from the sentinel-augmented construction used here.)
 - Leutbecher, M. (2019). Ensemble size: How suboptimal is less than
   infinity? *QJRMS* 145, 107–128.
 - Moran, P. A. P. (1950). Notes on continuous stochastic phenomena.
@@ -534,6 +565,7 @@ sufficient for production use.
   convective events. *MWR* 136, 78–97.
 - Schwartz, C. S., & Sobash, R. A. (2017). Generating probabilistic
   forecasts from convection-allowing ensembles using neighborhood
-  approaches: A review and recommendations. *MWR* 145, 3397–3418.
+  approaches: A review and recommendations. *Monthly Weather Review*
+  145, 3397–3418. doi:10.1175/MWR-D-16-0400.1
 - Wilks, D. S. (2019). *Statistical Methods in the Atmospheric
   Sciences* (4th ed.). Elsevier.

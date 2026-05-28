@@ -277,9 +277,11 @@
               (0 = perfect). The "no-onset" atom is handled by mapping
               NaT to a sentinel beyond the season window before the
               Hersbach ensemble CRPS is evaluated — a proper score for
-              the mixed atom+continuous distribution, related to but
-              not identical with Hemri et al. 2014's analytical
-              censored-Gaussian CRPS. For ≥ 2-member ensembles we use
+              the mixed atom+continuous distribution. Related to but
+              not identical with the analytical closed-form CRPS for
+              a censored Gaussian (Jordan, Krüger &amp; Lerch 2019,
+              JSS), which is a distinct construction. For ≥ 2-member
+              ensembles we use
               the <strong>Ferro 2014 fair correction</strong> so the
               finite-ensemble bias doesn't penalise small ensembles
               (e.g. IFS-S2S's 11 members) relative to large ones.
