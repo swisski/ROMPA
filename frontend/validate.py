@@ -21,7 +21,10 @@ from typing import Any
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PYTHON = "/home/alex/classwork/DSICLINIC/monsoon-bench/.venv/bin/python"
+# Interpreter to use for the subprocess uvicorn + JSON probes. Defaults
+# to the current interpreter; override with ROMP_VALIDATE_PYTHON if you
+# want to run validate.py under venv A while booting the server with B.
+PYTHON = os.environ.get("ROMP_VALIDATE_PYTHON", sys.executable)
 HOST = "127.0.0.1"
 BOOT_TIMEOUT = 60.0
 REQ_TIMEOUT = 120.0

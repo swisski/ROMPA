@@ -20,7 +20,7 @@ import xarray as xr
 
 from momp.stats.detect import detect_onset
 
-DEMO = Path("/home/alex/classwork/DSICLINIC/ROMPA/demo/data")
+DEMO = Path(__file__).resolve().parent.parent / "demo" / "data"
 AIFS = DEMO / "aifs" / "2015.nc"
 NGCM = DEMO / "ngcm" / "2015.nc"
 OBS = DEMO / "obs" / "2015.nc"

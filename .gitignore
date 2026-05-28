@@ -234,3 +234,24 @@ __marimo__/
 
 # frontend symlink tree for aice_data (created by frontend/link_aice_data.sh)
 .data_aice/
+
+# frontend symlink tree for Ethiopia data (created by frontend/link_ethiopia_data.sh)
+.data_ethiopia/
+
+# Raw NetCDF data drops — large, not source. Keep alongside the repo
+# (or in a sibling aice_data/ folder for India) and let the link_*.sh
+# scripts wire them in.
+CHIRPS_IMERG/
+aifs/
+gencast/
+
+# Local screenshots from interactive walkthroughs.
+Screenshot*.png
+
+# Local tooling — agent state, AI assistant config, skill manifests.
+.agents/
+.claude/
+skills-lock.json
+
+# WSL-specific Windows alternate data streams.
+*:Zone.Identifier

@@ -1,178 +1,203 @@
-# ROMP — Rainy season Onset Metrics Package
+# ROMPA — ROMP with extra verification metrics and an interactive
+dashboard
 
-**ROMP** is a Python package for detecting and benchmarking **rainy season onset** in observational and forecast datasets. It provides tools for onset detection, ensemble forecast statistics, binned and spatial metrics, and visualization workflows commonly used in climate research.
+**ROMPA** is a fork of [bosup/ROMP](https://github.com/bosup/ROMP) —
+the Rainy Season Onset Metrics Package — adding:
 
+- **Six new verification metrics** layered on top of ROMP's baseline
+  binned / spatial skill scores: sentinel-augmented CRPS, FSS,
+  displacement / area bias, CORP reliability decomposition, the
+  Integrated Onset Error (IOE) and Spatial Probability Score (SPS)
+  for monsoon-front progression, and isochrone geometry
+  (Hausdorff + Fréchet).
+- **CRA (Contiguous Rain Area, Ebert & McBride 2000)** as a 7th
+  metric — object-based MSE decomposition of raw rainfall into
+  displacement / volume / pattern. Contributed by Gio Hernandez
+  ([giomhern](https://github.com/giomhern)) via PR #1 and improved
+  here with a fixed score mask (exact decomposition identity),
+  sub-cell shift search, and an in-UI shift-vector diagnostic.
+- **An interactive verification dashboard** (`frontend/`) — FastAPI
+  + vanilla-JS + Plotly — for browsing every metric across multiple
+  S2S models, multiple years, with year-range aggregation, multi-
+  model overlay, and per-panel interpretation footers.
+- **Region support for India and Ethiopia** out of the box, with the
+  pipeline structured so adding another country is mostly a question
+  of pointing `ROMP_DATA_ROOT` at a new symlink tree and setting
+  `ROMP_LAND_MASK`.
 
-## Key Capabilities
+The baseline ROMP package (`momp/`) — onset detection,
+configuration plumbing, the binned-skill-score driver — is **left
+intact and continues to work**. The fork only adds.
 
-- rainy season onset detection with user specified criteria
-- deterministic and probabilistic benchmarking metrics
-- Skill Scores (overall and binned)
-- Spatial metrics (MAE, False Alarm Rate, Miss Rate)
-- Reliability diagrams and spatial maps
-- Customizable region definitions (rectangular boundary, shapefile, polygon outline)
-- Config-driven, reproducible workflows
+For the per-commit / per-feature narrative, including everything
+fixed in audit passes, see **[docs/FORK_SUMMARY.md](docs/FORK_SUMMARY.md)**.
+For the metric ↔ paper map and acronym glossary, see
+**[docs/METRICS_AND_PAPERS.md](docs/METRICS_AND_PAPERS.md)**. For
+release-level notes, see **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
+---
 
-## Installation
+## What's new at a glance
 
-ROMP is intended for **local installation from source** (GitHub or local checkout). Installation from conda-forge chanel will be available in it's future versions.  
+| Track                 | Where                                    | Status |
+| --------------------- | ---------------------------------------- | ------ |
+| CRPS (mixed dist'n)   | `momp/metrics/crps.py`                   | ✓      |
+| FSS                   | `momp/metrics/neighborhood.py`           | ✓      |
+| Centroid / area bias  | `momp/metrics/displacement.py`           | ✓      |
+| CORP reliability      | `momp/graphics/corp_reliability.py`      | ✓      |
+| IOE + SPS             | `momp/metrics/progression.py`            | ✓      |
+| Isochrone geometry    | `momp/graphics/isochrone.py`             | ✓      |
+| CRA decomposition     | `momp/metrics/cra.py`                    | ✓      |
+| Dashboard backend     | `frontend/api/*.py`                      | ✓      |
+| Dashboard frontend    | `frontend/static/*`                      | ✓      |
+| India support         | env: `ROMP_LAND_MASK=India`              | ✓      |
+| Ethiopia support      | env: `ROMP_LAND_MASK=Ethiopia`           | ✓      |
 
-Installing ROMP consists of **two steps**:
+**Test count:** 175 unit / known-answer tests (12 of which are
+integration tests, auto-skipped when demo data isn't present). All
+green at HEAD.
 
-1. **Create and activate a Python environment**
-2. **Install the ROMP source code into that environment**
+---
 
+## Quick start — dashboard
 
-### Step 1 — Set up a Python environment
+The fastest path to seeing the fork's contribution in action:
 
-#### Option A — Python virtual environment (pip-only)
-This option is a lightweight setup which isolates project dependencies assuming the underlying operating system provides the necessary heavy lifting (doesn't duplicate system-level files).
-
-For **Windows** users, follow the steps below to set up Python environment  
-
-1. `python -m venv .venv-momp`
-   Creates a new virtual environment directory named `.venv-mpop` in the current folder.
-
-2. `.venv-momp/Scripts/activate.bat`
-   Activates the virtual environment so that the terminal uses the local Python instance.
-
-
-For **Linux/Mac** users, follow steps below:  
 ```bash
-python -m venv .venv-momp
-source .venv-momp/bin/activate
+git clone https://github.com/swisski/ROMPA.git
+cd ROMPA
+python -m venv .venv && source .venv/bin/activate
+pip install -e .[frontend]
+./frontend/run.sh
 ```
 
-#### Option B — Set up Conda environment
+With no data tree linked, `frontend/run.sh` falls back to the small
+`demo/data/` bundled with the repo (2015 AIFS + IMD). Open
+`http://127.0.0.1:8000`.
 
-This option is good if you work with **NetCDF, HDF5, or other system-level scientific libraries**  
+To run against the AICE four-model India bundle (AIFS deterministic,
+NGCM51, IFS-S2S, FuXi-S2S) drop the `aice_data/` sibling repo next
+to this one and run `./frontend/link_aice_data.sh`. For the Ethiopia
+0.25° bundle (CHIRPS-IMERG + AIFS + GenCast), drop the three data
+folders inside this repo and run `./frontend/link_ethiopia_data.sh`.
+`run.sh` auto-picks whichever symlink tree exists.
 
-1. `conda create -n momp "python>=3.10"`
-Create a New Conda Environment
+See [`docs/FORK_SUMMARY.md`](docs/FORK_SUMMARY.md) §Region support
+for the env-var table.
 
-2. `conda activate momp`
-Activate the environment:
+---
 
+## Quick start — package only (CLI workflow)
 
-### Step 2 — Install the package from source
-
-#### Clone from GitHub and install
-
-with python or conda env activate from step 1, clone the source code from package repository    
+The baseline ROMP CLI is unchanged:
 
 ```bash
-git clone https://github.com/bosup/ROMP.git
-cd momp
+pip install -e .
+momp-run                  # original binned-skill-score workflow
+momp-run-progression      # NEW — IOE + SPS + isochrones via Milestone-2 driver
 ```
 
-For **Windows** users,  
+Both read `params/config.in` and `params/region_def.py` the same way.
 
+---
 
-`python -m pip install -U pip` Upgrades the `pip` package manager to the latest version to ensure compatibility.  
+## Installation details
 
-`pip install .` Installs the package with all project dependencies. Python is isolated at this point.   
+Same as upstream — Python 3.10–3.13. Heavy scientific deps
+(`xarray`, `cartopy`, `geopandas`, `netcdf4`, `regionmask`) are
+easier under conda; the `frontend` extra adds `fastapi`, `uvicorn`,
+`scikit-learn`. The package is editable-installable with
+`pip install -e .[dev,frontend]`.
 
-For **Mac/Linux** users,  
+```bash
+# pip
+python -m venv .venv && source .venv/bin/activate
+pip install -e .[dev,frontend]
+
+# conda
+conda create -n momp "python>=3.10"
+conda activate momp
+pip install -e .[dev,frontend]
+```
+
+Verify:
+
+```bash
+python -c "import momp; print(momp.__file__)"
+pytest -q                                  # 175 tests, ~30s
+pytest -m integration -v                   # +12 integration tests if demo data present
+```
+
+---
+
+## Package organization (high level)
+
+The original ROMP layout is preserved. New additions:
 
 ```
-pip install -U pip
-pip install .
+momp/
+  metrics/
+    crps.py             [new] sentinel-augmented mixed-distribution CRPS
+    neighborhood.py     [new] Fractions Skill Score
+    displacement.py     [new] centroid km + area-bias
+    progression.py      [new] IOE + SPS
+    cra.py              [new] CRA decomposition (Gio Hernandez + fork polish)
+  graphics/
+    corp_reliability.py [new] CORP / MCB-DSC-UNC
+    isochrone.py        [new] contour extraction + Hausdorff/Fréchet
+  app/
+    progression_verification.py  [new] driver for IOE/SPS/iso
+  utils/
+    land_mask.py        [extended] regionmask country masks + bundled-shapefile
+                                   override + polygon-coords helper for outlines
+
+frontend/                [new] dashboard, see docs/FORK_SUMMARY.md
+  api/                       FastAPI backend (14 endpoints)
+  static/                    vanilla JS + Plotly UI
+
+docs/
+  FORK_SUMMARY.md       [new] canonical narrative — start here
+  CHANGELOG.md          [new] per-release ledger
+  DESIGN_metrics_extension.md   [new] two-milestone design doc
+  METRICS_AND_PAPERS.md [new] metric ↔ paper map + acronym glossary
+  example_milestone1_probabilistic.ipynb  [new] executed demo
+  example_milestone2_progression.ipynb    [new] executed demo
+  example_realdata_cross_model.ipynb      [new] real-data cross-model verification
+  example_progression_analysis.ipynb      [new] IOE/SPS deep-dive
 ```
 
-## Verify installation
-`python -c "import momp; print(momp.__file__)"`
-
-You should see a path pointing to your **source directory**
-
-## Configuration
-Experiment configuration is controlled via:  
-`params/config.in`
-
-This file defines:
-- Input and output directories
-- Dataset selection
-- Ensemble definitions
-- Verification windows
-- Region settings
-
-Region boundaries are defined in:  
-`params/region_def.py`
-
-## Run ROMP
-With user-defined `config.in`, the main benchmarking workflow is executed via CLI::  
-
-`momp-run`
-
-Typical steps performed:
-1. Load configuration
-2. Read model and observation data
-3. Detect rainy season onset
-4. Evaluate model against reference data 
-5. Generate benchmarking metrics
-6. Save NetCDF outputs and figures
-7. Make metric plots
-
-## Python Requirements
-- Python ≥ 3.10  
-
-Runtime dependencies include:
-- NumPy
-- Pandas
-- Xarray
-- NetCDF4
-- Matplotlib
-- Scipy
-- geopandas
-- seaborn
-- regionmask
-- gcsfs
-- zarr
-- cartopy
-
-
-## Package Organization (high level)
-- driver.py — main package workflow entry point
-- app/ — high-level benchmarking workflow
-- stats/ — onset detection and statistical processing
-- metrics/ — error and skill score metrics calculation
-- params/ — configuration files and region definitions
-- lib/ — core workflow control, parsing, conventions
-- io/ — input/output handling
-- graphics/ — plotting and visualization
-- utils/ — shared helper utilities
-
-## Outputs
-Results are written to (default or user specified dirs):
-
-`output/` — NetCDF and serialized metric files  
-`figure/` — generated plots and maps
-
-## Development Notes
-Install in editable mode for development:
-`pip install -e .`  
-
-Code is organized to separate:
-- I/O
-- statistics
-- metrics
-- visualization
+---
 
 ## Versioning
-Semantic versioning is used (MAJOR.MINOR.PATCH)  
-Current version: 0.0.1  
-APIs may evolve during development
+
+Semantic versioning per upstream. Package version in
+`pyproject.toml` remains `0.0.1` (fork-only artifact, the original
+authors hold version-bump authority). The frontend API is tagged
+separately at `0.6.2-shift-float-display`.
+
+---
 
 ## License
-MIT License
+
+MIT, per upstream.
+
+---
 
 ## Citation
-If you use ROMP in your research, please cite:
-ROMP: Rainy season Onset Metrics Package, UChicago HCWF Authors, 2026
+
+If you use this fork in research, please cite both:
+
+> Dong, B. et al. *ROMP: Rainy Season Onset Metrics Package.*
+> UChicago HCWF Authors, 2026.
+
+> Baumgartner, A. and Hernandez, G. *ROMPA: ROMP fork with
+> additional verification metrics and an interactive dashboard.*
+> UChicago DSI Capstone, 2026.
+
+---
 
 ## Contact
-Author: bosup  
-Email: bodong@uchicago.edu
 
-
-
+- Upstream (ROMP): Bo Dong (`bodong@uchicago.edu`)
+- Fork (ROMPA): Alex Baumgartner (`alex57baumgartner@gmail.com`)
+- CRA contribution: Gio Hernandez ([giomhern](https://github.com/giomhern))

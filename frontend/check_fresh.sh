@@ -5,7 +5,7 @@ set -e
 PORT="${ROMP_FRONTEND_PORT:-8000}"
 HOST="${ROMP_FRONTEND_HOST:-127.0.0.1}"
 BASE="http://${HOST}:${PORT}"
-PY=/home/alex/classwork/DSICLINIC/monsoon-bench/.venv/bin/python
+PY="${ROMP_PY:-python3}"
 
 if ! curl -s -m 2 "$BASE/api/health" > /dev/null; then
     echo "no server reachable at $BASE"
